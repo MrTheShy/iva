@@ -668,7 +668,12 @@ function failureMessage(data: { message: string; details?: unknown }): string {
 // it can be reviewed after. The draft evaporates on its own (30s). Off unless
 // SHOW_REASONING=1. See reasoning-bridge.ts for why a singleton is enough here.
 
-type TelegramRequester = { request: (method: string, body: unknown) => Promise<{ ok: boolean; status?: number; body?: unknown }> };
+// Matches the real channel.telegram handle: request(method, body?) → {ok,...}.
+// body is `any` on purpose — the handle types it as JsonObject; a narrower type
+// here would clash on parameter variance.
+type TelegramRequester = {
+  request: (method: string, body?: any) => Promise<{ ok: boolean; status?: number; body?: unknown }>;
+};
 
 let draftSeq = 0;
 let draftTimer: ReturnType<typeof setInterval> | null = null;
