@@ -1,0 +1,42 @@
+# docker compose up --build
+#
+# Everything the agent can reach is listed here. That is the point: the file is
+# short so the blast radius is readable in one screen.
+
+services:
+  iva:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+
+    volumes:
+      # The vault — the user's memory. Mounted because it has to be; keep it a
+      # git repo with a private remote so a bad command costs one day, not
+      # everything. doctor.ts already commits and pushes it nightly.
+      - ./data/vault:/data/vault
+
+      # Nothing else is mounted on purpose. The agent's bash tool runs on the
+      # real filesystem by design (TECH_DEBT.md #2) — in here, "real" is this
+      # container and the line above.
+
+    # Egress is where a prompt injection turns into a data leak: the agent reads
+    # a Telegram message or a web page, and the same tools that fetch also send.
+    # There is no simple allowlist in Docker — this is a placeholder for a real
+    # one (a proxy container, or an internal network with a filtering gateway).
+    # Until then the honest statement is: outbound is open, and the mitigation
+    # is the project's own outbound_gate.py, which is fail-closed.
+    networks: [outbound]
+
+    # Defence in depth for the cheap cases: no new privileges, no writable root
+    # filesystem outside the volume, capabilities dropped.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+    # The agent shells out; give it room but not the machine.
+    mem_limit: 2g
+    pids_limit: 512
+
+networks:
+  outbound:
+    driver: bridge

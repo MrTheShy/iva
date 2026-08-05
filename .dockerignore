@@ -1,0 +1,13 @@
+# The image should contain the source, not the working copy.
+
+.git
+node_modules
+data
+vault
+log
+.env
+.env.*
+!.env.example
+
+# Local security audit — never in an image, never in the repo.
+AUDIT-*.md
