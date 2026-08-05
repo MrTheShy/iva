@@ -50,14 +50,37 @@ RUN npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
 
 COPY . .
 
+# `eve start` refuses to run without build output — it does not build on the
+# fly. Doing it here means the image is self-contained and startup is fast;
+# doing it at run time would rebuild on every restart.
+RUN npm run build
+
 # Not root. The agent runs arbitrary shell commands by design — it should not
 # be able to write outside what it owns.
 RUN chown -R node:node /app
 USER node
 
 # The vault lives here, mounted from outside. It is the user's data: it does not
-# belong in an image layer.
-ENV VAULT_DIR=/data/vault
+# belong in an image layer. The variable name is the one init-vault.mjs and the
+# memory scripts actually read — ASSISTANT_VAULT_DIR, not VAULT_DIR.
+ENV ASSISTANT_VAULT_DIR=/data/vault
+
+# Runtime state — Telegram offset, settings, usage, schedule catch-up markers.
+# Default is ./data relative to the workdir, which lives inside the image and
+# vanishes on every restart: the poller then re-reads or skips messages, the
+# spend log resets, and the schedules lose their catch-up baseline. Point it at
+# the volume so a restart is a restart, not amnesia.
+ENV ASSISTANT_DATA_DIR=/data/state
+
+# The nightly doctor commits the vault, and git refuses to commit without an
+# identity. A container has no ~/.gitconfig, so it goes here — deliberately
+# generic: the vault is personal data, its commit log should not carry an
+# identity that travels with a backup.
+ENV GIT_AUTHOR_NAME=iva \
+    GIT_AUTHOR_EMAIL=iva@localhost \
+    GIT_COMMITTER_NAME=iva \
+    GIT_COMMITTER_EMAIL=iva@localhost
+
 VOLUME ["/data"]
 
 EXPOSE 3000
