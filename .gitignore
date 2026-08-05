@@ -34,3 +34,6 @@ agent/skills/**/*.pem
 
 # Update candidate worktree (iva update)
 /.iva-update/
+
+# local security audit — not for publication
+AUDIT-*.md

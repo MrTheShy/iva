@@ -10,7 +10,8 @@
       "status": [
         "active",
         "archived",
-        "superseded"
+        "superseded",
+        "retracted"
       ]
     },
     "weekly-summary": {
@@ -22,7 +23,8 @@
       "status": [
         "active",
         "archived",
-        "superseded"
+        "superseded",
+        "retracted"
       ]
     },
     "monthly-summary": {
@@ -34,7 +36,8 @@
       "status": [
         "active",
         "archived",
-        "superseded"
+        "superseded",
+        "retracted"
       ]
     },
     "yearly-summary": {
@@ -46,7 +49,8 @@
       "status": [
         "active",
         "archived",
-        "superseded"
+        "superseded",
+        "retracted"
       ]
     },
     "note": {
@@ -59,7 +63,8 @@
         "active",
         "draft",
         "archived",
-        "superseded"
+        "superseded",
+        "retracted"
       ]
     },
     "contact": {
@@ -72,7 +77,8 @@
       "status": [
         "active",
         "inactive",
-        "superseded"
+        "superseded",
+        "retracted"
       ]
     },
     "project": {
@@ -88,7 +94,8 @@
         "paused",
         "cancelled",
         "draft",
-        "superseded"
+        "superseded",
+        "retracted"
       ]
     },
     "idea": {
@@ -102,7 +109,8 @@
         "explored",
         "archived",
         "draft",
-        "superseded"
+        "superseded",
+        "retracted"
       ]
     },
     "decision": {
@@ -114,7 +122,8 @@
       "status": [
         "active",
         "superseded",
-        "reverted"
+        "reverted",
+        "retracted"
       ]
     }
   },
@@ -182,7 +191,8 @@
     "reverted": 10,
     "cancelled": 11,
     "inactive": 12,
-    "archived": 13
+    "archived": 13,
+    "retracted": 9.5
   },
   "status_defaults": {
     "_comment": "default status for new cards by type (when status is missing)",

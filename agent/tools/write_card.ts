@@ -42,11 +42,15 @@ function schemaPath(): string {
 function loadSchema(): { status: Record<string, string[]>; aliases: Record<string, string> } {
   const fallback: { status: Record<string, string[]>; aliases: Record<string, string> } = {
     status: {
-      contact: ["active", "inactive"],
-      project: ["active", "done", "paused", "cancelled", "draft"],
-      decision: ["active", "superseded", "reverted"],
-      idea: ["active", "explored", "archived", "draft"],
-      note: ["active", "draft", "archived"],
+      // "retracted" is here too, not only in schema.json: if the schema fails
+      // to load, retracting a false fact must not be the one operation that
+      // gets rejected — the only way left would be `archived`, which means
+      // something else entirely.
+      contact: ["active", "inactive", "retracted"],
+      project: ["active", "done", "paused", "cancelled", "draft", "retracted"],
+      decision: ["active", "superseded", "reverted", "retracted"],
+      idea: ["active", "explored", "archived", "draft", "retracted"],
+      note: ["active", "draft", "archived", "retracted"],
     },
     aliases: { person: "contact", company: "contact", thought: "note", proposal: "idea" },
   };

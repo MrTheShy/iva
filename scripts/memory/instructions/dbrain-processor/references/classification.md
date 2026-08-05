@@ -40,7 +40,7 @@ same person, same project, same decision being refined. Append a dated line unde
 `## Log` section and sharpen the `description`. Creating a near-duplicate is the most
 common mistake — grep first.
 
-## ADD / UPDATE / SUPERSEDE / NOOP (temporal conflict)
+## ADD / UPDATE / SUPERSEDE / RETRACT / NOOP (temporal conflict)
 
 For every fact, pick one operation:
 
@@ -58,6 +58,28 @@ For every fact, pick one operation:
   **Never leave two contradictory current values on the same subject.**
   If a whole card is obsolete (project renamed, decision reverted), set `status: superseded`
   and add `superseded_by: [[new-card]]`.
+- **RETRACT** — the old value **was never true**: you misheard, mis-linked, or inferred wrong.
+  This is *not* SUPERSEDE. Superseding writes `- 2026-03→06: TDI Group` into `## History`,
+  which asserts the fact held during that window — archiving a falsehood as if it were a
+  past truth. Instead: correct the current value as usual, and record the removal under a
+  `## Retracted` section with the date you found out and why:
+
+  ```markdown
+  ## Retracted
+  - 2026-08-05: "works at TDI Group" — never true, confused with another contact (was INFERRED)
+  ```
+
+  If the whole card is bogus, set `status: retracted` rather than `archived` — archived means
+  "no longer relevant", retracted means "should not have been written".
+
+  **Why the distinction is load-bearing:** `## History` is what the model reads back as the
+  subject's past. A wrong inference filed there becomes a fact, gets summarized into the
+  weekly rollup, and by the monthly one nobody can tell it came from a guess. Retractions
+  also concentrate: a card with three of them is telling you its source is unreliable, which
+  is information no `## History` line will ever give you.
+
+  Pairs with `confidence:` — an INFERRED value that turns out wrong is the ordinary case for
+  RETRACT, and an EXTRACTED one turning out wrong is worth a second look at the transcript.
 
 The deterministic scan `.graph/supersede-candidates.json` lists same-entity cards with
 conflicting fields — resolve each by superseding the stale one.
