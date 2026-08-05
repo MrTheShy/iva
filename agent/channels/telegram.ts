@@ -684,7 +684,7 @@ const DRAFT_TAIL = 3500;
 /** Cap on the persisted reasoning, well under the 32768 rich-message limit. */
 const REASONING_CAP = 12000;
 
-function startReasoningDraft(tg: TelegramRequester & { chatId: number; messageThreadId?: number }): void {
+function startReasoningDraft(tg: TelegramRequester & { chatId: string | number; messageThreadId?: number }): void {
   if (!SHOW_REASONING) return;
   beginReasoning();
   const draftId = (draftSeq = (draftSeq % 2_000_000_000) + 1); // non-zero Integer
@@ -718,7 +718,7 @@ function stopDraftTimer(): void {
 
 /** Turn end: stop the live draft and, if there was reasoning, persist it collapsed. */
 async function finishReasoningDraft(
-  tg: TelegramRequester & { chatId: number; messageThreadId?: number },
+  tg: TelegramRequester & { chatId: string | number; messageThreadId?: number },
 ): Promise<void> {
   if (!SHOW_REASONING) return;
   stopDraftTimer();
