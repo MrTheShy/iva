@@ -11,6 +11,12 @@ import { join } from "node:path";
 // (гарантирует длину ПОСЛЕ конвертации). htmlToPlain: декодирующий plain-фолбэк.
 import { toTelegramHtmlChunks, htmlToPlain, needsRichMessage } from "../../scripts/lib/telegram-format.mjs";
 import { describeImage } from "../vision.js";
+import {
+  SHOW_REASONING,
+  beginReasoning,
+  currentReasoning,
+  endReasoning,
+} from "../reasoning-bridge.js";
 import { hasInboundAttackSignal, sanitizeInbound, scanOutbound } from "../lib/security-gate.js";
 import {
   mediaFromRaw,
@@ -655,6 +661,86 @@ function failureMessage(data: { message: string; details?: unknown }): string {
   return [tr(text.en, text.ru), ...(errorId ? ["", `Error id: ${errorId}`] : [])].join("\n");
 }
 
+// ── Reasoning display (SHOW_REASONING) ────────────────────────────────────────
+// While the model thinks, stream its reasoning into an ephemeral Telegram draft
+// (native <tg-thinking> block, Bot API 10.2 — animated, no edit flicker). When
+// the turn ends, drop a collapsed <details> "🧠 Ragionamento" under the answer so
+// it can be reviewed after. The draft evaporates on its own (30s). Off unless
+// SHOW_REASONING=1. See reasoning-bridge.ts for why a singleton is enough here.
+
+type TelegramRequester = { request: (method: string, body: unknown) => Promise<{ ok: boolean; status?: number; body?: unknown }> };
+
+let draftSeq = 0;
+let draftTimer: ReturnType<typeof setInterval> | null = null;
+let draftLastLen = -1;
+
+/** How much of the live reasoning to show in the draft: a tail, so it "scrolls". */
+const DRAFT_TAIL = 3500;
+/** Cap on the persisted reasoning, well under the 32768 rich-message limit. */
+const REASONING_CAP = 12000;
+
+function startReasoningDraft(tg: TelegramRequester & { chatId: number; messageThreadId?: number }): void {
+  if (!SHOW_REASONING) return;
+  beginReasoning();
+  const draftId = (draftSeq = (draftSeq % 2_000_000_000) + 1); // non-zero Integer
+  draftLastLen = -1;
+  stopDraftTimer();
+  draftTimer = setInterval(() => {
+    const full = currentReasoning();
+    if (!full || full.length === draftLastLen) return; // nothing new
+    draftLastLen = full.length;
+    const shown = full.length > DRAFT_TAIL ? "…" + full.slice(-DRAFT_TAIL) : full;
+    void tg
+      .request("sendRichMessageDraft", {
+        chat_id: tg.chatId,
+        draft_id: draftId,
+        rich_message: { blocks: [{ type: "thinking", text: shown }] },
+        ...(tg.messageThreadId !== undefined ? { message_thread_id: tg.messageThreadId } : {}),
+      })
+      .catch(() => {
+        // A client that doesn't render rich drafts (old Bot API) just gets no
+        // preview — the answer still arrives via the normal path. Don't spam logs.
+      });
+  }, 1000);
+}
+
+function stopDraftTimer(): void {
+  if (draftTimer) {
+    clearInterval(draftTimer);
+    draftTimer = null;
+  }
+}
+
+/** Turn end: stop the live draft and, if there was reasoning, persist it collapsed. */
+async function finishReasoningDraft(
+  tg: TelegramRequester & { chatId: number; messageThreadId?: number },
+): Promise<void> {
+  if (!SHOW_REASONING) return;
+  stopDraftTimer();
+  const full = endReasoning();
+  if (!full.trim()) return;
+  const text = full.length > REASONING_CAP ? full.slice(0, REASONING_CAP) + "…" : full;
+  await tg
+    .request("sendRichMessage", {
+      chat_id: tg.chatId,
+      rich_message: {
+        blocks: [
+          {
+            type: "details",
+            summary: "🧠 Ragionamento",
+            is_open: false,
+            blocks: [{ type: "paragraph", text }],
+          },
+        ],
+      },
+      ...(tg.messageThreadId !== undefined ? { message_thread_id: tg.messageThreadId } : {}),
+    })
+    .catch(() => {
+      // Same as the draft: a client without rich-message support just doesn't
+      // get the collapsible. The answer already went out.
+    });
+}
+
 const telegram = telegramChannel({
   botUsername: process.env.TELEGRAM_BOT_USERNAME ?? "my_bot",
   // Картинку/файл НЕ суём в запрос к модели (это и ломалось: octet-stream → reject, потом
@@ -721,12 +807,17 @@ const telegram = telegramChannel({
         onWorkingStatusError: (error) =>
           console.error("[telegram] статус-сообщение не отправилось:", error),
       });
+      // Stream the model's thinking into a live draft while the turn runs.
+      startReasoningDraft(tg);
     },
     async "turn.completed"(_data, channel, ctx) {
       await finishStatus(channel, ctx.session.id, "completed");
+      await finishReasoningDraft(channel.telegram);
     },
     async "turn.cancelled"(_data, channel, ctx) {
       await finishStatus(channel, ctx.session.id, "cancelled");
+      stopDraftTimer();
+      endReasoning(); // discard: no collapsible for an aborted turn
     },
     // Страховка: если терминальное turn-событие потерялось (краш), парковка сессии
     // всё равно снимает busy-флаг — мост не должен буферизовать вечно.
@@ -848,6 +939,8 @@ const telegram = telegramChannel({
     // Ход упал: статус прибираем по CAS, но сообщение об ошибке от него не гейтим —
     // позднее terminal-событие всё равно должно объяснить пользователю, что произошло.
     async "turn.failed"(data, channel, ctx) {
+      stopDraftTimer();
+      endReasoning(); // discard: the turn didn't produce an answer
       try {
         await finishStatus(channel, ctx.session.id, "failed");
       } catch {

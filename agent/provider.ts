@@ -2,6 +2,7 @@ import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { CODEX_BASE_URL, codexAuthHeaders } from "../scripts/lib/codex-oauth.mjs";
 import { EFFORTS } from "../scripts/lib/model-catalog.mjs";
+import { SHOW_REASONING, pushReasoning } from "./reasoning-bridge.js";
 
 type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 
@@ -165,7 +166,20 @@ const stripReasoningMiddleware: LanguageModelMiddleware = {
       stream: stream.pipeThrough(
         new TransformStream({
           transform(part, controller) {
-            if (!REASONING_PART_TYPES.has(part.type)) controller.enqueue(part);
+            if (REASONING_PART_TYPES.has(part.type)) {
+              // Tee the thinking to the display bridge before dropping it. The
+              // strip below stays: reasoning must not re-enter the replayed
+              // history (see the InvalidPrompt note above). This is read-only.
+              if (
+                SHOW_REASONING &&
+                part.type === "reasoning-delta" &&
+                typeof (part as { delta?: unknown }).delta === "string"
+              ) {
+                pushReasoning((part as { delta: string }).delta);
+              }
+              return; // dropped from the output/history, as before
+            }
+            controller.enqueue(part);
           },
         }),
       ),
