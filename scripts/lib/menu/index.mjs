@@ -25,6 +25,7 @@ import crons from "./crons.mjs";
 import skills from "./skills.mjs";
 import status from "./status.mjs";
 import service from "./service.mjs";
+import loader from "./loader.mjs";
 
 // sid → экранный модуль. Псевдо-sid mdl/thk сюда не входят: это хендофф в визарды
 // /model//think (обрабатывается в onCallback ниже до диспатча на экран).
@@ -40,6 +41,7 @@ export const SCREENS = {
   sk: skills,
   st: status,
   svc: service,
+  ld: loader,
 };
 
 const PREFIX = "iva_menu:";

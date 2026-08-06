@@ -17,6 +17,7 @@ import {
   currentReasoning,
   endReasoning,
 } from "../reasoning-bridge.js";
+import { pickWorkingWord } from "../lib/loader-words.mjs";
 import { hasInboundAttackSignal, sanitizeInbound, scanOutbound } from "../lib/security-gate.js";
 import {
   mediaFromRaw,
@@ -536,10 +537,12 @@ async function sendWorkingStatus(tg: {
     ...(canStop ? { reply_markup: stopReplyMarkup() } : {}),
     ...(tg.messageThreadId !== undefined ? { message_thread_id: tg.messageThreadId } : {}),
   };
+  // One random word per turn from the style chosen in /menu (Loader screen).
+  const word = pickWorkingWord();
   if (workLoaderSupported) {
     const res = await tg.request("sendMessage", {
       ...base,
-      text: `${WORK_LOADER.alt} ${tr("Working…", "Работаю…")}`,
+      text: `${WORK_LOADER.alt} ${word}`,
       entities: [{
         type: "custom_emoji",
         offset: 0,
@@ -550,7 +553,7 @@ async function sendWorkingStatus(tg: {
     if (res.ok) return (res.body as any)?.result?.message_id ?? null;
     workLoaderSupported = false;
   }
-  const res = await tg.request("sendMessage", { ...base, text: `${WORK_LOADER.fallback} ${tr("Working…", "Работаю…")}` });
+  const res = await tg.request("sendMessage", { ...base, text: `${WORK_LOADER.fallback} ${word}` });
   return res.ok ? ((res.body as any)?.result?.message_id ?? null) : null;
 }
 
