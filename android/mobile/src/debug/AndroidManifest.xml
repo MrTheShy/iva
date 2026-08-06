@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: lets the app reach an Iva server over plain http, which is how
+     you try it against localhost or a machine on your LAN before there is a certificate.
+     Release builds keep Android's default, so a shipped app cannot talk cleartext. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:usesCleartextTraffic="true" />
+</manifest>
