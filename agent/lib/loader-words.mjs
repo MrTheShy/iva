@@ -11,10 +11,15 @@
 import { readSettings } from "./settings.mjs";
 
 function lang() {
-  const s = readSettings().language;
-  if (s === "it" || s === "en" || s === "ru") return s;
+  // AGENT_LANGUAGE=it wins: settings.language can only hold en/ru (the menu UI
+  // languages i18n knows), so it can never say "it" even when the whole
+  // conversation is Italian. The working word shows in the chat flow, so it
+  // should match the chat, not the menu. For en/ru, settings then env decide.
   const e = process.env.AGENT_LANGUAGE;
-  if (e === "it" || e === "en" || e === "ru") return e;
+  if (e === "it") return "it";
+  const s = readSettings().language;
+  if (s === "en" || s === "ru") return s;
+  if (e === "en" || e === "ru") return e;
   return "en";
 }
 
