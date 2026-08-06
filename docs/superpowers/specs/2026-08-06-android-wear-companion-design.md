@@ -41,11 +41,11 @@ premi, parli
   testo
   ↓ POST /eve/v1/app  {text}      ┐
     Bearer <token>                │ verifica bearer
+                                  │ eco del dettato ───────────────→ 🎙 «...» (tuo)
                                   │ send() sulla sessione della chat
                                   │   ↓ Iva pensa, usa vault/tool
-                                  │ risposta (testo)               ┌→ 🎙 «...» (tuo)
-                                  │ sendTelegramHtml ×2  ──────────┤
-  ← 200 {reply}                   ┘                                └→ risposta di Iva
+                                  │ message.completed ─────────────→ risposta di Iva
+  ← 200 {reply}                   ┘   (il canale la posta da sé)
   ↓ TextToSpeech (locale)
 la senti
 ```
@@ -83,8 +83,15 @@ Content-Type: application/json
 | `200 { "reply": "…" }` | turno completato |
 | `400` | body non JSON, campo `text` assente o vuoto dopo trim |
 | `401` | header assente, malformato, o token diverso |
+| `409` | un turno è già in corso su quella chat |
 | `429` | oltre 30 richieste al minuto |
+| `502` | il turno è fallito (`turn.failed`) |
 | `504` | nessuna risposta entro 120 secondi |
+
+Il `409` evita di infilare un turno dentro uno già in volo: il ponte Telegram
+(`scripts/poller/`) per questo bufferizza, e l'app non passa dal ponte. Lo stato si legge
+da `getChatStatus(chatKey)` (`agent/lib/run-status.ts`), che il canale tiene aggiornato a
+ogni turno. L'app lo dice a voce: «sta ancora rispondendo».
 
 ### Autenticazione
 
@@ -102,26 +109,63 @@ Token per dispositivo (`data/app-devices.json` con hash per device) è la via di
 se un giorno i dispositivi diventano molti — con due, revocare significa rigenerare il
 token e reincollarlo. Va annotato come commento `ponytail:` nel codice, non costruito ora.
 
-### Sessione
+### Sessione — verificato sui tipi di eve
 
 Il turno va inviato alla stessa sessione della chat Telegram, così una conversazione
-iniziata dall'orologio prosegue su Telegram e viceversa.
+iniziata dall'orologio prosegue su Telegram e viceversa. eve lo supporta apertamente: non
+serve nessun trucco.
 
-Il continuation token della chat si ricostruisce dal `chatKey` `${chatId}:${threadId ?? ""}`
-(`agent/lib/run-status.ts:9`). **Da verificare** contro i tipi di eve appena le dipendenze
-sono installate: è l'unico punto del design con un rischio implementativo.
+Ogni route handler riceve `send` come secondo argomento —
+«starts or continues a session on this channel»
+(`node_modules/eve/dist/src/channel/routes.d.ts`, `RouteHandlerArgs`). Il token si
+costruisce con `telegramContinuationToken({ chatId })`, esportato da
+`eve/channels/telegram`: per le chat private usa il solo `chatId`. Niente stringhe
+indovinate a mano.
 
-Ripiego, se eve non permette di indirizzare quella sessione dall'esterno: l'app apre una
-sessione propria, come già fanno `scripts/heartbeat.ts` e `scripts/daily-digest.ts`. Il
-terreno comune resta il vault più il mirror su Telegram. Va scelto in fase di piano, non
-scoperto a metà implementazione.
+```ts
+const session = await send(text, {
+  auth,                                              // vedi sotto
+  continuationToken: telegramContinuationToken({ chatId }),
+  state: { chatId, chatType: "private", conversationId: null, messageThreadId: null },
+});
+```
+
+Lo `state` serve solo alla firma: `POST<TelegramChannelState>` è un canale stateful, e il
+seed viene ignorato quando la sessione esiste già — che è il caso normale.
+
+`auth` è un `SessionAuthContext` della stessa forma che `buildAuth`
+(`agent/channels/telegram.ts:218`) costruisce per i messaggi Telegram, con
+`authenticator: "iva-app"` per distinguere in log e attributi chi ha parlato dall'app.
+
+Chat e utente non aggiungono configurazione: `TELEGRAM_DIGEST_CHAT_ID`, che heartbeat e
+digest già usano, più l'id da `TELEGRAM_ALLOWED_USER_IDS`.
+
+### Come torna la risposta all'app
+
+`send` risolve appena la sessione accetta il messaggio, non a fine turno. Il testo si
+raccoglie dallo stream durevole degli eventi:
+
+1. `resolveActiveSession({ continuationToken })` → `sessionId`, se la sessione esiste
+2. `getSession(sessionId).getStreamTailIndex()` → indice da cui leggere, preso **prima**
+   del send, altrimenti i primi eventi si perdono
+3. `send(...)` come sopra
+4. `session.getEventStream({ startIndex })` → si legge fino al terminale
+5. si accumulano i `message.completed` del turno, saltando quelli con
+   `finishReason === "tool-calls"` o `message` nullo, e ci si ferma al primo
+   `turn.completed`, `turn.failed` o `turn.cancelled`
+
+È lo stesso filtro che il canale applica per decidere cosa postare su Telegram
+(`agent/channels/telegram.ts:1132`): l'app sente esattamente quello che compare in chat.
 
 ### Mirror su Telegram
 
-Due chiamate a `sendTelegramHtml` (`scripts/lib/telegram-send.ts:41`) sulla chat
-dell'utente: prima il testo dettato con prefisso 🎙, poi la risposta. La funzione applica
-già il gate `scanOutbound` e non lancia mai — un mirror fallito non deve far fallire il
-turno, che all'app è già stato restituito.
+Una sola chiamata: l'eco del dettato, `sendTelegramHtml` (`scripts/lib/telegram-send.ts:41`)
+con prefisso 🎙, prima del send. Non lancia mai, quindi un eco fallito non affonda il turno.
+
+**La risposta non va rispecchiata a mano.** Inviando nella sessione della chat, l'handler
+`message.completed` del canale (`agent/channels/telegram.ts:1131`) la posta già lui, con
+gate `scanOutbound`, rich message e chunking a 4096 inclusi. Rispecchiarla di nuovo
+significherebbe mandarla due volte.
 
 ### Esposizione
 
@@ -184,8 +228,12 @@ dipendenza dal telefono: dopo, l'orologio lavora da solo.
 - token errato, assente, malformato → 401
 - `IVA_APP_BEARER` vuoto → 401 anche con un token plausibile
 - `text` assente, vuoto, solo spazi → 400
-- turno riuscito → `sendTelegramHtml` chiamato due volte, testo dettato e risposta
-- mirror fallito → il turno risponde comunque 200
+- chat con turno in corso → 409, e `send` non viene chiamato
+- turno riuscito → `sendTelegramHtml` chiamato **una** volta sola, con il testo dettato
+- più `message.completed` nello stesso turno → concatenati nell'ordine di arrivo
+- `message.completed` con `finishReason: "tool-calls"` → escluso dalla risposta
+- `turn.failed` → 502, non attesa fino al timeout
+- eco fallito → il turno risponde comunque 200
 
 Lato Android nessun framework: un check a mano sui due dispositivi.
 
