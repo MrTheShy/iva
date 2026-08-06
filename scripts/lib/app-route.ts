@@ -32,6 +32,11 @@ const RATE_WINDOW_MS = 60_000;
 /** How long a turn may run before the app gets 504 and stops waiting. */
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+/** Where the resident voice server listens. Loopback only; see scripts/voice/server.py. */
+const VOICE_URL = process.env.IVA_VOICE_URL ?? "http://127.0.0.1:8730/say";
+/** Synthesis is seconds, not minutes: past this the app is better off with its own voice. */
+const VOICE_TIMEOUT_MS = 30_000;
+
 export interface AppRouteConfig {
   /** Shared secret the apps present as `Authorization: Bearer …`. */
   readonly bearer: string | undefined;
@@ -156,6 +161,64 @@ async function collectReply(
 }
 
 /**
+ * Rejects a request that does not carry the app secret. Returns null when it does.
+ *
+ * Fail-closed: an unset secret locks everyone out rather than letting everyone in.
+ * These routes are the only thing the reverse proxy publishes, so a missing
+ * `IVA_APP_BEARER` must not become an open door to the assistant.
+ */
+function unauthorized(
+  config: AppRouteConfig,
+  request: Request,
+): Response | null {
+  const expected = config.bearer?.trim();
+  const received = extractBearerToken(request.headers.get("authorization"));
+  if (expected && received && equalSecret(received, expected)) return null;
+  console.error("[app] rejected a request with a bad or missing bearer");
+  return json({ error: "unauthorized" }, 401);
+}
+
+/**
+ * Speaks a reply in Iva's own voice instead of the phone's.
+ *
+ * A separate request from the turn on purpose: the answer reaches the app as soon as
+ * it exists, and the audio follows a few seconds later. Any failure here is answered
+ * plainly so the app can fall back to the voice built into the device — a companion
+ * that stays silent because a model is down is worse than one that sounds generic.
+ */
+export function createVoiceRoute(config: AppRouteConfig) {
+  return async function handleVoiceRequest(
+    request: Request,
+  ): Promise<Response> {
+    const rejected = unauthorized(config, request);
+    if (rejected) return rejected;
+
+    const text = await readText(request);
+    if (text === null) return json({ error: "text is required" }, 400);
+
+    try {
+      const spoken = await fetch(VOICE_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(VOICE_TIMEOUT_MS),
+      });
+      if (!spoken.ok) {
+        console.error("[app] voce non disponibile:", spoken.status);
+        return json({ error: "voice unavailable" }, 503);
+      }
+      return new Response(spoken.body, {
+        status: 200,
+        headers: { "content-type": "audio/wav" },
+      });
+    } catch (error) {
+      console.error("[app] voce irraggiungibile:", error);
+      return json({ error: "voice unavailable" }, 503);
+    }
+  };
+}
+
+/**
  * Builds the route handler. Everything the handler touches beyond eve itself arrives
  * through {@link AppRouteConfig}, so the tests drive it without a server, a network,
  * or a Telegram token.
@@ -176,15 +239,8 @@ export function createAppRoute(config: AppRouteConfig) {
     request: Request,
     args: AppRouteArgs,
   ): Promise<Response> {
-    // Fail-closed: an unset secret locks everyone out rather than letting everyone
-    // in. This route is the one thing the reverse proxy publishes, so a missing
-    // `IVA_APP_BEARER` must not become an open door to the assistant.
-    const expected = config.bearer?.trim();
-    const received = extractBearerToken(request.headers.get("authorization"));
-    if (!expected || !received || !equalSecret(received, expected)) {
-      console.error("[app] rejected a request with a bad or missing bearer");
-      return json({ error: "unauthorized" }, 401);
-    }
+    const rejected = unauthorized(config, request);
+    if (rejected) return rejected;
     if (!config.chatId || !config.userId)
       return json({ error: "chat not configured" }, 503);
     if (rateLimited(config.now())) return json({ error: "slow down" }, 429);

@@ -80,6 +80,7 @@ import {
 } from "../../scripts/lib/telegram-turn-start.ts";
 import {
   createAppRoute,
+  createVoiceRoute,
   defaultAppRouteConfig,
 } from "../../scripts/lib/app-route.ts";
 import { pathToFileURL } from "node:url";
@@ -1633,5 +1634,8 @@ export default {
     // authored channel, exactly as the comment above the reset route explains. The
     // handler is built once so its rate-limit window spans requests.
     POST<TelegramChannelState>("/eve/v1/app", createAppRoute(appRouteConfig)),
+    // The same reply, spoken in Iva's own voice. Separate from the turn so the answer
+    // reaches the app as soon as it exists and the audio follows.
+    POST("/eve/v1/app/voice", createVoiceRoute(appRouteConfig)),
   ],
 };

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAppRoute, type AppRouteConfig } from "./app-route.ts";
+import {
+  createAppRoute,
+  createVoiceRoute,
+  type AppRouteConfig,
+} from "./app-route.ts";
 
 type StreamEvent = { type: string; data: Record<string, unknown> };
 
@@ -233,5 +237,79 @@ void test("a stolen token cannot burn credits without limit", async () => {
   assert.equal(
     (await h.handler(request({ text: "ciao" }), h.args)).status,
     409,
+  );
+});
+
+// --- la rotta della voce ---------------------------------------------------
+
+function voiceHarness(upstream: (request: Request) => Promise<Response>) {
+  const asked: string[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    asked.push(String(init?.body ?? ""));
+    return upstream(new Request(String(input), init));
+  }) as typeof fetch;
+  const handler = createVoiceRoute({
+    bearer: "secret-token",
+    chatId: "4242",
+    userId: "77",
+    echo: () => Promise.resolve(),
+    isBusy: () => false,
+    now: () => 1_000,
+    timeoutMs: 120_000,
+  });
+  return { handler, asked, restore: () => (globalThis.fetch = original) };
+}
+
+const WAV = new Response(new Uint8Array([82, 73, 70, 70]), {
+  headers: { "content-type": "audio/wav" },
+});
+
+void test("the spoken reply comes back as audio", async (t) => {
+  const h = voiceHarness(() => Promise.resolve(WAV));
+  t.after(h.restore);
+
+  const response = await h.handler(request({ text: "ciao" }));
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "audio/wav");
+  assert.deepEqual(JSON.parse(h.asked[0] ?? "{}"), { text: "ciao" });
+});
+
+void test("speaking needs the same secret as talking", async (t) => {
+  const h = voiceHarness(() => Promise.resolve(WAV));
+  t.after(h.restore);
+
+  for (const bearer of ["wrong", null]) {
+    const response = await h.handler(request({ text: "ciao" }, bearer));
+    assert.equal(response.status, 401, `bearer: ${String(bearer)}`);
+  }
+  // Nothing was ever asked of the synthesiser.
+  assert.deepEqual(h.asked, []);
+});
+
+void test("nothing to say is not sent to the synthesiser", async (t) => {
+  const h = voiceHarness(() => Promise.resolve(WAV));
+  t.after(h.restore);
+
+  assert.equal((await h.handler(request({ text: "  " }))).status, 400);
+  assert.deepEqual(h.asked, []);
+});
+
+void test("a voice that is down says so, so the app can use its own", async (t) => {
+  // Both shapes of failure: the synthesiser answering badly, and not answering at all.
+  const failing = voiceHarness(() =>
+    Promise.resolve(new Response("", { status: 500 })),
+  );
+  assert.equal((await failing.handler(request({ text: "ciao" }))).status, 503);
+  failing.restore();
+
+  const unreachable = voiceHarness(() =>
+    Promise.reject(new Error("connection refused")),
+  );
+  t.after(unreachable.restore);
+  assert.equal(
+    (await unreachable.handler(request({ text: "ciao" }))).status,
+    503,
   );
 });
