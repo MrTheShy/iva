@@ -78,6 +78,10 @@ import {
   publishTelegramEarlyStatus,
   publishTelegramTurnStarted,
 } from "../../scripts/lib/telegram-turn-start.ts";
+import {
+  createAppRoute,
+  defaultAppRouteConfig,
+} from "../../scripts/lib/app-route.ts";
 import { pathToFileURL } from "node:url";
 
 // Токен (TELEGRAM_BOT_TOKEN) и секрет вебхука (TELEGRAM_WEBHOOK_SECRET_TOKEN)
@@ -1591,6 +1595,8 @@ const telegram = telegramChannel({
   }),
 });
 
+const appRouteConfig = defaultAppRouteConfig();
+
 const telegramWebhookRoute = telegram.routes.find(
   (route) =>
     route.transport !== "websocket" &&
@@ -1622,5 +1628,10 @@ export default {
         process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN,
       ),
     ),
+    // Voice companion apps (android/). Lives here, not in a channel of its own, so
+    // `send` continues the chat's session: eve namespaces continuation tokens per
+    // authored channel, exactly as the comment above the reset route explains. The
+    // handler is built once so its rate-limit window spans requests.
+    POST<TelegramChannelState>("/eve/v1/app", createAppRoute(appRouteConfig)),
   ],
 };
