@@ -8,7 +8,10 @@
 // Pure and cheap: read on every turn start, no cache, so a /menu change applies
 // to the very next message.
 
-import { readSettings } from "./settings.js";
+// ".ts", not ".js": this module is loaded by the eve bundle (the channel) AND
+// by the poller, which runs raw Node and does not rewrite the specifier. Same
+// reason i18n.ts imports settings this way.
+import { readSettings } from "./settings.ts";
 
 type Lang = "it" | "en" | "ru";
 

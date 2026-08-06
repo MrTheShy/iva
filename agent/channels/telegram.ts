@@ -26,7 +26,7 @@ import {
 } from "../../scripts/lib/telegram-format.ts";
 import { describeImage } from "../vision.js";
 import {
-  SHOW_REASONING,
+  showReasoning,
   beginReasoning,
   currentReasoning,
   endReasoning,
@@ -865,19 +865,28 @@ function failureMessage(data: { message: string; details?: unknown }): string {
   ].join("\n");
 }
 
-// ── Reasoning display (SHOW_REASONING) ────────────────────────────────────────
+// ── Reasoning display ────────────────────────────────────────────────────────
 // While the model thinks, stream its reasoning into an ephemeral Telegram draft
 // (native <tg-thinking> block, Bot API 10.2 — animated, no edit flicker). When
-// the turn ends, drop a collapsed <details> "🧠 Ragionamento" under the answer so
-// it can be reviewed after. The draft evaporates on its own (30s). Off unless
-// SHOW_REASONING=1. See reasoning-bridge.ts for why a singleton is enough here.
+// the turn ends, drop a collapsed <details> under the answer so it can be
+// reviewed after. The draft evaporates on its own (30s).
+//
+// Off by default, switchable from /menu → ⏳ (settings.showReasoning) and read
+// once per turn, so a tap applies to the next message without a restart. See
+// reasoning-bridge.ts for that, and for how a background session's thinking is
+// kept out of this buffer.
+//
+// Both sends go through scanOutbound first. This is a THIRD outbound path
+// beside message.completed and telegram-send.ts, and it carries more risk than
+// either: the model reasons over whatever its tools returned, so a key that
+// `bash` read out of a file appears in the thinking before it could ever appear
+// in the answer. Same fail-open policy as the answer — redact and log loudly,
+// never drop the message.
 
-// Matches the real channel.telegram handle: request(method, body?) → {ok,...}.
-// body is `any` on purpose — the handle types it as JsonObject; a narrower type
-// here would clash on parameter variance.
-type TelegramRequester = {
-  request: (method: string, body?: any) => Promise<{ ok: boolean; status?: number; body?: unknown }>;
-};
+type ReasoningHandle = Pick<
+  TelegramHandle,
+  "chatId" | "messageThreadId" | "request"
+>;
 
 let draftSeq = 0;
 let draftTimer: ReturnType<typeof setInterval> | null = null;
@@ -888,8 +897,33 @@ const DRAFT_TAIL = 3500;
 /** Cap on the persisted reasoning, well under the 32768 rich-message limit. */
 const REASONING_CAP = 12000;
 
-function startReasoningDraft(tg: TelegramRequester & { chatId: string | number; messageThreadId?: number }): void {
-  if (!SHOW_REASONING) return;
+// Truncation counts code points, not UTF-16 units: slicing mid-surrogate would
+// hand Telegram half a character. Same care as sanitizeInbound's inbound cap.
+function tailByCodePoint(text: string, max: number): string {
+  const points = Array.from(text);
+  return points.length > max ? "…" + points.slice(-max).join("") : text;
+}
+
+function headByCodePoint(text: string, max: number): string {
+  const points = Array.from(text);
+  return points.length > max ? points.slice(0, max).join("") + "…" : text;
+}
+
+// Redact BEFORE truncating: a secret straddling the cut would otherwise lose the
+// tail that makes it match a pattern, and the visible half would still ship.
+function redactReasoning(text: string, logLeak: boolean): string {
+  const guard = scanOutbound(text);
+  if (logLeak && !guard.clean) {
+    console.error(
+      "[security] outbound leak redacted in reasoning:",
+      guard.findings.map((f) => `${f.type}:${f.name}`).join(", "),
+    );
+  }
+  return guard.text;
+}
+
+function startReasoningDraft(tg: ReasoningHandle): void {
+  if (!showReasoning()) return; // read per turn: a /menu tap needs no restart
   beginReasoning();
   const draftId = (draftSeq = (draftSeq % 2_000_000_000) + 1); // non-zero Integer
   draftLastLen = -1;
@@ -898,13 +932,17 @@ function startReasoningDraft(tg: TelegramRequester & { chatId: string | number; 
     const full = currentReasoning();
     if (!full || full.length === draftLastLen) return; // nothing new
     draftLastLen = full.length;
-    const shown = full.length > DRAFT_TAIL ? "…" + full.slice(-DRAFT_TAIL) : full;
+    // Redaction is silent here: the draft reruns every second, and one leak
+    // would otherwise fill the journal. finishReasoningDraft logs it once.
+    const shown = tailByCodePoint(redactReasoning(full, false), DRAFT_TAIL);
     void tg
       .request("sendRichMessageDraft", {
         chat_id: tg.chatId,
         draft_id: draftId,
         rich_message: { blocks: [{ type: "thinking", text: shown }] },
-        ...(tg.messageThreadId !== undefined ? { message_thread_id: tg.messageThreadId } : {}),
+        ...(tg.messageThreadId !== undefined
+          ? { message_thread_id: tg.messageThreadId }
+          : {}),
       })
       .catch(() => {
         // A client that doesn't render rich drafts (old Bot API) just gets no
@@ -921,14 +959,14 @@ function stopDraftTimer(): void {
 }
 
 /** Turn end: stop the live draft and, if there was reasoning, persist it collapsed. */
-async function finishReasoningDraft(
-  tg: TelegramRequester & { chatId: string | number; messageThreadId?: number },
-): Promise<void> {
-  if (!SHOW_REASONING) return;
+async function finishReasoningDraft(tg: ReasoningHandle): Promise<void> {
+  // Deliberately unconditional: if the feature was switched off mid-turn the
+  // timer and buffer still have to be released. endReasoning() returns "" when
+  // no buffer was opened, so a disabled turn falls out here on its own.
   stopDraftTimer();
   const full = endReasoning();
   if (!full.trim()) return;
-  const text = full.length > REASONING_CAP ? full.slice(0, REASONING_CAP) + "…" : full;
+  const text = headByCodePoint(redactReasoning(full, true), REASONING_CAP);
   await tg
     .request("sendRichMessage", {
       chat_id: tg.chatId,
@@ -936,13 +974,17 @@ async function finishReasoningDraft(
         blocks: [
           {
             type: "details",
-            summary: "🧠 Ragionamento",
+            // Built at call time, never a module const: a translated string
+            // frozen at import would keep the old language until restart.
+            summary: tr("🧠 Reasoning", "🧠 Рассуждения"),
             is_open: false,
             blocks: [{ type: "paragraph", text }],
           },
         ],
       },
-      ...(tg.messageThreadId !== undefined ? { message_thread_id: tg.messageThreadId } : {}),
+      ...(tg.messageThreadId !== undefined
+        ? { message_thread_id: tg.messageThreadId }
+        : {}),
     })
     .catch(() => {
       // Same as the draft: a client without rich-message support just doesn't

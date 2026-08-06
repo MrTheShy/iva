@@ -5,7 +5,7 @@ import {
   codexAuthHeaders,
 } from "../scripts/lib/codex-oauth.ts";
 import { EFFORTS } from "../scripts/lib/model-catalog.ts";
-import { SHOW_REASONING, pushReasoning } from "./reasoning-bridge.js";
+import { pushReasoning } from "./reasoning-bridge.js";
 
 type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 
@@ -204,8 +204,11 @@ const stripReasoningMiddleware: LanguageModelMiddleware = {
               // Tee the thinking to the display bridge before dropping it. The
               // strip below stays: reasoning must not re-enter the replayed
               // history (see the InvalidPrompt note above). This is read-only.
+              //
+              // No feature check here on purpose: pushReasoning is inert unless
+              // the channel opened a buffer for a turn it means to display, so
+              // the setting is consulted once per turn instead of per delta.
               if (
-                SHOW_REASONING &&
                 part.type === "reasoning-delta" &&
                 typeof (part as { delta?: unknown }).delta === "string"
               ) {
