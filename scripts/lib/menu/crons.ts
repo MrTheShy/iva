@@ -37,6 +37,7 @@ const EVE_SCHEDULES = [
   { name: "memory-monthly", cron: "20 4 1 * *" },
   { name: "memory-yearly", cron: "25 4 1 1 *" },
   { name: "digest", cron: "0 8 * * *" },
+  { name: "heartbeat", cron: "*/5 * * * *" },
 ];
 
 function loadRollupStatus(dataDir: string): Record<string, RollupEntry> {

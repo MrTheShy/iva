@@ -36,7 +36,10 @@ const englishRows = [
     ["📊 Status", "iva_menu:st:o"],
     ["🛠 Maintenance", "iva_menu:svc:o"],
   ],
-  [["⏳ Loader", "iva_menu:ld:o"]],
+  [
+    ["💓 Heartbeat", "iva_menu:hb:o"],
+    ["⏳ Loader", "iva_menu:ld:o"],
+  ],
   [["✖ Close", "iva_menu:r:x"]],
 ];
 
@@ -65,7 +68,10 @@ const russianRows = [
     ["📊 Статус", "iva_menu:st:o"],
     ["🛠 Обслуживание", "iva_menu:svc:o"],
   ],
-  [["⏳ Загрузка", "iva_menu:ld:o"]],
+  [
+    ["💓 Сердцебиение", "iva_menu:hb:o"],
+    ["⏳ Загрузка", "iva_menu:ld:o"],
+  ],
   [["✖ Закрыть", "iva_menu:r:x"]],
 ];
 

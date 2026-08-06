@@ -46,7 +46,10 @@ export default {
         b(T("📊 Status", "📊 Статус"), "iva_menu:st:o"),
         b(T("🛠 Maintenance", "🛠 Обслуживание"), "iva_menu:svc:o"),
       ],
-      [b(T("⏳ Loader", "⏳ Загрузка"), "iva_menu:ld:o")],
+      [
+        b(T("💓 Heartbeat", "💓 Сердцебиение"), "iva_menu:hb:o"),
+        b(T("⏳ Loader", "⏳ Загрузка"), "iva_menu:ld:o"),
+      ],
       [b(T("✖ Close", "✖ Закрыть"), "iva_menu:r:x")],
     ];
     return {

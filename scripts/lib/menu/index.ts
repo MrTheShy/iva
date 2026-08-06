@@ -25,6 +25,7 @@ import crons from "./crons.ts";
 import skills from "./skills.ts";
 import status from "./status.ts";
 import loader from "./loader.ts";
+import heartbeat from "./heartbeat.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 type MenuButton = { text: string; callback_data: string };
@@ -146,6 +147,7 @@ export const SCREENS = {
   st: status,
   svc: service,
   ld: loader,
+  hb: heartbeat,
 };
 
 const PREFIX = "iva_menu:";
