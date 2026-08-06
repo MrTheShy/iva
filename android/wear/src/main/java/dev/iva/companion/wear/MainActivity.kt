@@ -51,8 +51,14 @@ class MainActivity : ComponentActivity() {
         // drop the answer nobody heard.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-            .launch(Manifest.permission.RECORD_AUDIO)
+        // Asked on the press, not at startup — same reason as the phone app: a request
+        // made before the first screen is drawn can be missed, and then a perfectly
+        // working microphone looks broken.
+        val askForMicrophone = registerForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (!granted) turns.fail("Senza microfono non posso ascoltarti.")
+        }
 
         // The phone may have published the address and token while the watch was out of
         // range, so ask for them at every start until there is something to use.
@@ -71,7 +77,10 @@ class MainActivity : ComponentActivity() {
                 if (config.isComplete) {
                     TalkFace(
                         state = state,
-                        onPress = turns::startListening,
+                        onPress = {
+                            if (turns.hasMicPermission) turns.startListening()
+                            else askForMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+                        },
                         onRelease = turns::stopListening,
                     )
                 } else {

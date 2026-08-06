@@ -1,8 +1,12 @@
 package dev.iva.companion
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.core.content.ContextCompat
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -24,6 +28,16 @@ class Dictation(private val context: Context) {
         get() = SpeechRecognizer.isRecognitionAvailable(context)
 
     /**
+     * Whether the microphone may be used at all. Checked before every dictation, not
+     * once at startup: a permission can be refused, revoked from Settings, or reset by
+     * Android when the app goes unused, and each of those must ask again rather than
+     * fail with a recognizer error nobody can interpret.
+     */
+    val hasPermission: Boolean
+        get() = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
      * Starts listening. [onPartial] fires while the user speaks so the screen can show
      * the words landing; [onResult] fires once with the final text, or with null when
      * nothing was understood. Must be called from the main thread — `SpeechRecognizer`
@@ -32,11 +46,11 @@ class Dictation(private val context: Context) {
     fun start(
         onPartial: (String) -> Unit,
         onResult: (String?) -> Unit,
-        onError: (String) -> Unit,
+        onError: (String, String) -> Unit,
     ) {
         stop()
         if (!isAvailable) {
-            onError("Questo dispositivo non sa trascrivere.")
+            onError("Questo dispositivo non sa trascrivere.", diagnostics("nessun servizio di riconoscimento"))
             return
         }
         val recognizer = SpeechRecognizer.createSpeechRecognizer(context).also { this.recognizer = it }
@@ -65,7 +79,7 @@ class Dictation(private val context: Context) {
                     onResult(null)
                     return
                 }
-                onError(describe(error))
+                onError(describe(error), diagnostics("${codeName(error)} ($error)"))
             }
         })
         recognizer.startListening(
@@ -98,14 +112,61 @@ class Dictation(private val context: Context) {
     private fun describe(error: Int): String = when (error) {
         SpeechRecognizer.ERROR_AUDIO -> "Problema col microfono."
         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Manca il permesso microfono."
+        // Several phones report a missing microphone permission as a plain client
+        // error, so this says the likely cause instead of a shrug.
+        SpeechRecognizer.ERROR_CLIENT ->
+            if (hasPermission) "Il riconoscitore ha rifiutato la richiesta." else "Manca il permesso microfono."
         SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
             "La trascrizione non ha rete."
         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Il riconoscitore è occupato."
+        SpeechRecognizer.ERROR_SERVER, SERVER_DISCONNECTED -> "Il servizio vocale non risponde."
+        LANGUAGE_NOT_SUPPORTED, LANGUAGE_UNAVAILABLE ->
+            "L'italiano non è disponibile per la dettatura."
         else -> "Non sono riuscito a trascrivere."
     }
 
+    /** Names the error the way the platform does, so a report can be looked up. */
+    private fun codeName(error: Int): String = when (error) {
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT"
+        SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK"
+        SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO"
+        SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER"
+        SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT"
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT"
+        SpeechRecognizer.ERROR_NO_MATCH -> "ERROR_NO_MATCH"
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY"
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS"
+        TOO_MANY_REQUESTS -> "ERROR_TOO_MANY_REQUESTS"
+        SERVER_DISCONNECTED -> "ERROR_SERVER_DISCONNECTED"
+        LANGUAGE_NOT_SUPPORTED -> "ERROR_LANGUAGE_NOT_SUPPORTED"
+        LANGUAGE_UNAVAILABLE -> "ERROR_LANGUAGE_UNAVAILABLE"
+        CANNOT_CHECK_SUPPORT -> "ERROR_CANNOT_CHECK_SUPPORT"
+        else -> "ERROR_$error"
+    }
+
+    /**
+     * The line the user copies out of the app when something fails. It carries what a
+     * reader would otherwise have to ask for: which phone, which Android, whether the
+     * permission and the recognizer are actually there.
+     */
+    private fun diagnostics(cause: String): String = listOf(
+        "dettatura: $cause",
+        "lingua=$LANGUAGE",
+        "permesso=${if (hasPermission) "concesso" else "NEGATO"}",
+        "riconoscitore=${if (isAvailable) "presente" else "ASSENTE"}",
+        "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+    ).joinToString(" · ")
+
     companion object {
         const val LANGUAGE = "it-IT"
+
+        // Added after minSdk 30, so they are named here rather than pulled from a
+        // newer SpeechRecognizer constant the app cannot compile against.
+        private const val TOO_MANY_REQUESTS = 10
+        private const val SERVER_DISCONNECTED = 11
+        private const val LANGUAGE_NOT_SUPPORTED = 12
+        private const val LANGUAGE_UNAVAILABLE = 13
+        private const val CANNOT_CHECK_SUPPORT = 14
     }
 }
 

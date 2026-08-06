@@ -18,7 +18,8 @@ sealed interface TurnState {
 
     data class Answered(val question: String, val reply: String) : TurnState
 
-    data class Failed(val message: String) : TurnState
+    /** [detail] is the technical line the screen offers to copy. */
+    data class Failed(val message: String, val detail: String = "") : TurnState
 }
 
 /**
@@ -40,6 +41,10 @@ class TurnController(
 
     private var turn: Job? = null
 
+    /** True when the microphone may be used; the screen asks for it if not. */
+    val hasMicPermission: Boolean
+        get() = dictation.hasPermission
+
     /** Begins dictation. Speaking over an answer stops it, which is the point. */
     fun startListening() {
         speaker.stop()
@@ -48,13 +53,18 @@ class TurnController(
         dictation.start(
             onPartial = { partial -> _state.value = TurnState.Listening(partial) },
             onResult = { text -> if (text == null) _state.value = TurnState.Idle else ask(text) },
-            onError = { message -> _state.value = TurnState.Failed(message) },
+            onError = { message, detail -> _state.value = TurnState.Failed(message, detail) },
         )
     }
 
     /** Ends dictation; the final text still arrives and starts the turn. */
     fun stopListening() {
         dictation.stopListening()
+    }
+
+    /** Puts a failure on screen that did not come from a turn, e.g. a refused permission. */
+    fun fail(message: String, detail: String = "") {
+        _state.value = TurnState.Failed(message, detail)
     }
 
     /** Stops everything and goes quiet, without sending anything. */
@@ -86,7 +96,7 @@ class TurnController(
                     speaker.speak(answer.reply)
                 }
                 is Answer.Problem -> {
-                    _state.value = TurnState.Failed(answer.message)
+                    _state.value = TurnState.Failed(answer.message, answer.detail)
                     // Failures are spoken too: on the watch the screen is often already
                     // dark by the time an answer comes back.
                     speaker.speak(answer.message)

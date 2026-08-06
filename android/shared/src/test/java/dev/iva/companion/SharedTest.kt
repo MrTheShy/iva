@@ -68,6 +68,23 @@ class ReadAnswerTest {
     }
 
     @Test
+    fun `a failure carries a line worth copying, not just a mood`() {
+        val problem = IvaClient.readAnswer(502, """{"error":"provider down"}""") as Answer.Problem
+
+        // What the phone says and what gets pasted into a bug report are different jobs.
+        assertEquals("Iva si è inceppata.", problem.message)
+        assertTrue(problem.detail.contains("502"))
+        assertTrue(problem.detail.contains("provider down"))
+    }
+
+    @Test
+    fun `an empty body still says something in the copied line`() {
+        val problem = IvaClient.readAnswer(500, "") as Answer.Problem
+        assertTrue(problem.detail.contains("500"))
+        assertTrue(problem.detail.contains("vuota"))
+    }
+
+    @Test
     fun `a busy server is distinguishable from a rejected token`() {
         assertTrue((IvaClient.readAnswer(409, "") as Answer.Problem).message.contains("aspetta"))
         assertTrue((IvaClient.readAnswer(401, "") as Answer.Problem).message.contains("Token"))

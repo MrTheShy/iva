@@ -11,8 +11,12 @@ import java.net.URL
 sealed interface Answer {
     data class Spoken(val reply: String) : Answer
 
-    /** Something the user needs to hear about, already phrased for text-to-speech. */
-    data class Problem(val message: String) : Answer
+    /**
+     * Something the user needs to hear about. [message] is phrased for text-to-speech;
+     * [detail] is the technical line the app offers to copy, so a failure can be
+     * reported without plugging the phone into a computer.
+     */
+    data class Problem(val message: String, val detail: String = "") : Answer
 }
 
 /**
@@ -30,11 +34,19 @@ object IvaClient {
     private const val CONNECT_TIMEOUT_MS = 15_000
 
     suspend fun ask(config: Config, text: String): Answer = withContext(Dispatchers.IO) {
-        if (!config.isComplete) return@withContext Answer.Problem("Manca l'indirizzo o il token.")
+        if (!config.isComplete) {
+            return@withContext Answer.Problem(
+                "Manca l'indirizzo o il token.",
+                "impostazioni incomplete: indirizzo=${config.baseUrl.isNotBlank()} token=${config.token.isNotBlank()}",
+            )
+        }
         val connection = try {
             (URL(config.endpoint).openConnection() as HttpURLConnection)
         } catch (e: IOException) {
-            return@withContext Answer.Problem("Indirizzo non valido.")
+            return@withContext Answer.Problem(
+                "Indirizzo non valido.",
+                "URL rifiutato: ${config.endpoint} · ${e.javaClass.simpleName}: ${e.message}",
+            )
         }
         try {
             connection.requestMethod = "POST"
@@ -53,7 +65,10 @@ object IvaClient {
                 .orEmpty()
             readAnswer(status, body)
         } catch (e: IOException) {
-            Answer.Problem("Non riesco a raggiungere Iva.")
+            Answer.Problem(
+                "Non riesco a raggiungere Iva.",
+                "rete: ${e.javaClass.simpleName}: ${e.message} · ${config.endpoint}",
+            )
         } finally {
             connection.disconnect()
         }
@@ -64,24 +79,31 @@ object IvaClient {
      * is the only branching in the client, and every branch is a sentence the user hears
      * when things go wrong.
      */
-    fun readAnswer(status: Int, body: String): Answer = when (status) {
-        in 200..299 -> {
+    fun readAnswer(status: Int, body: String): Answer {
+        if (status in 200..299) {
             val reply = runCatching { JSONObject(body).optString("reply") }.getOrDefault("")
-            if (reply.isBlank()) Answer.Problem("Ha risposto senza dire niente.")
-            else Answer.Spoken(reply)
+            return if (reply.isNotBlank()) Answer.Spoken(reply)
+            else Answer.Problem("Ha risposto senza dire niente.", detail(status, body))
         }
-        401 -> Answer.Problem("Token rifiutato.")
-        400 -> Answer.Problem("Non ho capito cosa dire.")
-        409 -> Answer.Problem("Sta ancora rispondendo, aspetta.")
-        429 -> Answer.Problem("Troppe richieste di fila.")
-        502 -> Answer.Problem("Iva si è inceppata.")
-        503 -> Answer.Problem("Il server non è configurato.")
-        504 -> Answer.Problem("Ci sta mettendo troppo: guarda su Telegram.")
-        // Cloudflare taglia l'origine a 100s e risponde 524, prima che la rotta possa
-        // arrivare al suo tetto di 120s. Per chi ascolta è lo stesso caso del 504: la
-        // risposta arriva comunque in chat, perché il turno sul server continua.
-        524 -> Answer.Problem("Ci sta mettendo troppo: guarda su Telegram.")
-        in 520..529 -> Answer.Problem("Iva non risponde.")
-        else -> Answer.Problem("Errore $status.")
+        val message = when (status) {
+            401 -> "Token rifiutato."
+            400 -> "Non ho capito cosa dire."
+            409 -> "Sta ancora rispondendo, aspetta."
+            429 -> "Troppe richieste di fila."
+            502 -> "Iva si è inceppata."
+            503 -> "Il server non è configurato."
+            504 -> "Ci sta mettendo troppo: guarda su Telegram."
+            // Cloudflare taglia l'origine a 100s e risponde 524, prima che la rotta
+            // possa arrivare al suo tetto di 120s. Per chi ascolta è lo stesso caso del
+            // 504: la risposta arriva comunque in chat, perché il turno continua.
+            524 -> "Ci sta mettendo troppo: guarda su Telegram."
+            in 520..529 -> "Iva non risponde."
+            else -> "Errore $status."
+        }
+        return Answer.Problem(message, detail(status, body))
     }
+
+    /** The copied line for an HTTP failure: the status and what the server actually said. */
+    private fun detail(status: Int, body: String): String =
+        "HTTP $status · risposta: ${body.trim().take(300).ifEmpty { "(vuota)" }}"
 }

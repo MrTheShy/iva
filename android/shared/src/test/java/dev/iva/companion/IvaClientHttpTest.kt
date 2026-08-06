@@ -58,7 +58,7 @@ class IvaClientHttpTest {
 
         val answer = runBlocking { IvaClient.ask(config, "ciao") }
 
-        assertEquals(Answer.Problem("Non riesco a raggiungere Iva."), answer)
+        assertEquals("Non riesco a raggiungere Iva.", (answer as Answer.Problem).message)
     }
 
     @Test

@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
@@ -60,10 +62,20 @@ class MainActivity : ComponentActivity() {
         config = Settings.load(this)
         turns = TurnController(this, lifecycleScope) { config }
 
+        // Asked when the button is pressed, not at startup: a permission can be
+        // refused, revoked from Settings, or reset by Android when the app goes
+        // unused, and a request made before the first screen is drawn can be missed
+        // entirely — which looks exactly like a broken microphone.
         val askForMicrophone = registerForActivityResult(
             ActivityResultContracts.RequestPermission(),
-        ) { }
-        askForMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+        ) { granted ->
+            if (!granted) {
+                turns.fail(
+                    "Senza microfono non posso ascoltarti.",
+                    "permesso RECORD_AUDIO negato · concedilo da Impostazioni > App > Iva > Autorizzazioni",
+                )
+            }
+        }
 
         setContent {
             MaterialTheme {
@@ -83,7 +95,10 @@ class MainActivity : ComponentActivity() {
                     } else {
                         TalkScreen(
                             state = state,
-                            onPress = turns::startListening,
+                            onPress = {
+                                if (turns.hasMicPermission) turns.startListening()
+                                else askForMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+                            },
                             onRelease = turns::stopListening,
                             onRepeat = turns::repeatLast,
                             onSettings = { editing = true },
@@ -182,6 +197,22 @@ private fun TalkScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 12.dp),
             )
+
+            // A failure is worth nothing if it cannot leave the phone. The spoken line
+            // is for you; this is the line you paste to whoever fixes it.
+            val diagnostics = (state as? TurnState.Failed)?.detail.orEmpty()
+            if (diagnostics.isNotBlank()) {
+                Text(
+                    text = diagnostics,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 16.dp),
+                )
+                val clipboard = LocalClipboardManager.current
+                TextButton(onClick = { clipboard.setText(AnnotatedString(diagnostics)) }) {
+                    Text("Copia errore")
+                }
+            }
         }
 
         Box(
