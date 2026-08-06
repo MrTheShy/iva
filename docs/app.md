@@ -1,0 +1,92 @@
+# Voice companion apps
+
+Iva reaches you on Telegram. These apps let you reach her without a screen: press, talk,
+and hear the answer read back. One is a phone app, one runs on a Wear OS watch by
+itself. The source is in [`android/`](../android/README.md).
+
+Everything said from the wrist also arrives in your Telegram chat, so nothing you do
+from the apps is lost to the archive.
+
+## What it is not
+
+Not a second chat client. No history, no vault browser, no reminder list, no offline
+queue, no always-on hotword. Telegram has all of that already. The apps exist for the
+one thing a chat cannot do: a hands-free voice loop while you drive, cook or walk.
+
+## The route
+
+The apps speak to one endpoint on your own server:
+
+```
+POST /eve/v1/app
+Authorization: Bearer <IVA_APP_BEARER>
+
+{ "text": "ricordami di chiamare il commercialista" }
+→ { "reply": "Fatto, promemoria per domani alle 9." }
+```
+
+| Status | Meaning                                     |
+| ------ | ------------------------------------------- |
+| `200`  | the turn finished, `reply` is what she said |
+| `400`  | no usable `text` in the body                |
+| `401`  | wrong, missing or unconfigured bearer       |
+| `409`  | a turn is already running on that chat      |
+| `429`  | more than 30 requests in a rolling minute   |
+| `502`  | the turn failed                             |
+| `504`  | no answer within 120 seconds                |
+
+The request stays open for the whole turn on purpose: without a synchronous reply there
+is no voice loop.
+
+The turn goes into the **same session as your Telegram chat**, so a conversation started
+on the watch continues in Telegram and back. The reply is posted to the chat by the
+Telegram channel itself; only your dictated text is echoed there, marked 🎙.
+
+## Turning it on
+
+1. Add a secret to `.env`:
+
+   ```
+   IVA_APP_BEARER=<43 random base64url characters>
+   ```
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+   ```
+
+   Leave it empty and the route rejects everyone — that is the default and it is
+   deliberate.
+
+2. Restart Iva: `systemctl --user restart iva`.
+
+3. Publish **only** that route over HTTPS. This is the one part of Iva that faces the
+   internet; `/eve/v1/telegram` and the rest of the API stay on `127.0.0.1:8723`
+   ([deploy](./deploy.md)). With Caddy:
+
+   ```
+   iva.example.com {
+       handle /eve/v1/app {
+           reverse_proxy 127.0.0.1:8723
+       }
+       respond 404
+   }
+   ```
+
+4. Build and install the apps: [android/README.md](../android/README.md).
+
+5. Type the address and the token on the phone. The watch receives both over the
+   Wearable Data Layer and afterwards talks to the server on its own.
+
+## What guards it
+
+- **Fail-closed bearer.** An unset `IVA_APP_BEARER` locks the route rather than opening
+  it. The comparison is timing-safe.
+- **Rate limit.** 30 requests per rolling minute, so a stolen token cannot quietly burn
+  model credits.
+- **One turn at a time.** While the chat is busy the route answers `409` instead of
+  interleaving with what Telegram is doing.
+- **The chat is fixed.** Turns always go to `TELEGRAM_DIGEST_CHAT_ID` as the first user
+  in `TELEGRAM_ALLOWED_USER_IDS`. The apps cannot address anybody else.
+
+Speech recognition and speech synthesis run on the phone and the watch, so no audio ever
+leaves the device — only the transcribed text does.
