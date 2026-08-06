@@ -28,6 +28,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import dev.iva.companion.Config
 import dev.iva.companion.ConfigSync
+import dev.iva.companion.Dictation
 import dev.iva.companion.Settings
 import dev.iva.companion.TurnController
 import dev.iva.companion.TurnState
@@ -50,6 +51,17 @@ class MainActivity : ComponentActivity() {
         // A turn can run for a minute; the watch must not sleep in the middle of it and
         // drop the answer nobody heard.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Same safety net as the phone: if the watch's recognition service refuses the
+        // app, the system dictation takes the turn. On Wear OS this is the ordinary way
+        // to dictate anyway.
+        val systemDictation = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult(),
+        ) { result -> turns.acceptDictation(Dictation.textFrom(result.data)) }
+        turns.onServiceRefused = {
+            runCatching { systemDictation.launch(Dictation.systemDictationIntent()) }
+                .onFailure { turns.fail("Nessuna dettatura disponibile.") }
+        }
 
         // Asked on the press, not at startup — same reason as the phone app: a request
         // made before the first screen is drawn can be missed, and then a perfectly

@@ -45,6 +45,20 @@ class TurnController(
     val hasMicPermission: Boolean
         get() = dictation.hasPermission
 
+    /**
+     * Set by the screen. Called when the recognition service refuses to serve the app —
+     * which some vendor ROMs do to every third-party client. The screen answers by
+     * opening the system dictation, then hands the text back to [acceptDictation].
+     * Without it, the refusal is simply reported.
+     */
+    var onServiceRefused: ((String) -> Unit)? = null
+
+    /** The text the system dictation came back with; null when nothing was understood. */
+    fun acceptDictation(text: String?) {
+        val spoken = text?.trim().orEmpty()
+        if (spoken.isEmpty()) _state.value = TurnState.Idle else ask(spoken)
+    }
+
     /** Begins dictation. Speaking over an answer stops it, which is the point. */
     fun startListening() {
         speaker.stop()
@@ -54,6 +68,15 @@ class TurnController(
             onPartial = { partial -> _state.value = TurnState.Listening(partial) },
             onResult = { text -> if (text == null) _state.value = TurnState.Idle else ask(text) },
             onError = { message, detail -> _state.value = TurnState.Failed(message, detail) },
+            onServiceRefused = { detail ->
+                val fallback = onServiceRefused
+                if (fallback == null) {
+                    _state.value = TurnState.Failed("Il riconoscitore ha rifiutato la richiesta.", detail)
+                } else {
+                    _state.value = TurnState.Idle
+                    fallback(detail)
+                }
+            },
         )
     }
 

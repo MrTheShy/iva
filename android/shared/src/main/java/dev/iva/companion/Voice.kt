@@ -1,6 +1,7 @@
 package dev.iva.companion
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -8,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.core.content.ContextCompat
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
@@ -47,13 +49,22 @@ class Dictation(private val context: Context) {
         onPartial: (String) -> Unit,
         onResult: (String?) -> Unit,
         onError: (String, String) -> Unit,
+        onServiceRefused: (String) -> Unit,
     ) {
         stop()
         if (!isAvailable) {
             onError("Questo dispositivo non sa trascrivere.", diagnostics("nessun servizio di riconoscimento"))
             return
         }
-        val recognizer = SpeechRecognizer.createSpeechRecognizer(context).also { this.recognizer = it }
+        // Bind to a named service rather than the device default. Vendor ROMs ship
+        // their own assistant as the default recognizer, and several refuse
+        // third-party clients outright with ERROR_CLIENT; Google's service, when the
+        // phone has one, takes them.
+        val chosen = preferredService()
+        val recognizer = (
+            if (chosen != null) SpeechRecognizer.createSpeechRecognizer(context, chosen)
+            else SpeechRecognizer.createSpeechRecognizer(context)
+            ).also { this.recognizer = it }
         recognizer.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) = Unit
             override fun onBeginningOfSpeech() = Unit
@@ -79,7 +90,15 @@ class Dictation(private val context: Context) {
                     onResult(null)
                     return
                 }
-                onError(describe(error), diagnostics("${codeName(error)} ($error)"))
+                val detail = diagnostics("${codeName(error)} ($error)")
+                // The service exists but will not serve us. Nothing the user can fix,
+                // and nothing a retry changes: hand the turn to the system dictation
+                // screen instead, which every phone has.
+                if (error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_SERVER) {
+                    onServiceRefused(detail)
+                    return
+                }
+                onError(describe(error), detail)
             }
         })
         recognizer.startListening(
@@ -103,6 +122,28 @@ class Dictation(private val context: Context) {
         recognizer?.destroy()
         recognizer = null
     }
+
+    /**
+     * The recognition service to bind to: Google's when the phone has it, otherwise the
+     * device default. Returns null when nothing is installed, in which case the caller
+     * has already given up on availability.
+     */
+    private fun preferredService(): ComponentName? {
+        val services = context.packageManager
+            .queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+            .mapNotNull { it.serviceInfo }
+        val pick = services.firstOrNull { it.packageName.startsWith("com.google.android") }
+            ?: return null
+        return ComponentName(pick.packageName, pick.name)
+    }
+
+    /** Every recognition service on the phone — the answer to "which one refused us". */
+    private fun installedServices(): String = context.packageManager
+        .queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+        .mapNotNull { it.serviceInfo?.packageName }
+        .distinct()
+        .joinToString(",")
+        .ifEmpty { "nessuno" }
 
     private fun firstResult(bundle: Bundle?): String? =
         bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -154,11 +195,34 @@ class Dictation(private val context: Context) {
         "lingua=$LANGUAGE",
         "permesso=${if (hasPermission) "concesso" else "NEGATO"}",
         "riconoscitore=${if (isAvailable) "presente" else "ASSENTE"}",
+        "usato=${preferredService()?.packageName ?: "predefinito di sistema"}",
+        "installati=${installedServices()}",
         "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
     ).joinToString(" · ")
 
     companion object {
         const val LANGUAGE = "it-IT"
+
+        /**
+         * The system dictation screen, used when the recognition service refuses to
+         * serve the app directly. Every phone answers this intent; it listens, stops on
+         * its own, and hands back the text.
+         */
+        fun systemDictationIntent(): Intent =
+            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(
+                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+                )
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, LANGUAGE)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Parla con Iva")
+            }
+
+        /** The text the system dictation returned, or null when nothing came back. */
+        fun textFrom(data: Intent?): String? =
+            data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.takeIf { it.isNotBlank() }
 
         // Added after minSdk 30, so they are named here rather than pulled from a
         // newer SpeechRecognizer constant the app cannot compile against.

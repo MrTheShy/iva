@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import dev.iva.companion.Config
 import dev.iva.companion.ConfigSync
+import dev.iva.companion.Dictation
 import dev.iva.companion.Settings
 import dev.iva.companion.TurnController
 import dev.iva.companion.TurnState
@@ -61,6 +62,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         config = Settings.load(this)
         turns = TurnController(this, lifecycleScope) { config }
+
+        // Some vendor ROMs ship an assistant that refuses third-party recognition
+        // clients. When that happens the turn is not lost: the system dictation screen
+        // takes it, and its text comes back here.
+        val systemDictation = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult(),
+        ) { result -> turns.acceptDictation(Dictation.textFrom(result.data)) }
+        turns.onServiceRefused = {
+            runCatching { systemDictation.launch(Dictation.systemDictationIntent()) }
+                .onFailure { error ->
+                    turns.fail(
+                        "Nessuna dettatura disponibile su questo telefono.",
+                        "$it · fallback: ${error.javaClass.simpleName}",
+                    )
+                }
+        }
 
         // Asked when the button is pressed, not at startup: a permission can be
         // refused, revoked from Settings, or reset by Android when the app goes
