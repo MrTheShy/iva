@@ -1,4 +1,4 @@
-[English](./README.md) · **Русский**
+<p align="right"><a href="./README.md">English</a> · <b>Русский</b></p>
 
 <div align="center">
 
@@ -12,7 +12,7 @@
 [![built on eve](https://img.shields.io/badge/built%20on-eve-000000?logo=vercel&logoColor=white)](https://eve.dev/docs/introduction)
 [![Node 24](https://img.shields.io/badge/node-24.x-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 
-[Юзкейсы](#зачем-люди-ставят-иву) · [Что умеет](#что-умеет) · [Быстрый старт](#быстрый-старт) · [Память](#память---то-что-копится) · [Документация](#документация)
+[Юзкейсы](#зачем-люди-ставят-иву) · [Что умеет](#что-умеет) · [Установка](#установка) · [Память](#память---то-что-копится) · [Документация](#документация)
 
 </div>
 
@@ -23,6 +23,12 @@ Iva - self-hosted AI-ассистент в Telegram с многослойной 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 ```
+
+## Как это работает
+
+<img src="assets/iva-flow.webp" alt="Как работает Iva: голосовые, тексты, фото и PDF летят из Telegram в агента-иву, вокруг - память, ночная сборка, cron, напоминания, поиск, веб, workspace и документы" width="100%">
+
+Мост опрашивает Telegram через long-poll, так что публичный HTTPS, домен и webhook не нужны. Ива работает как два systemd user service, два systemd watchdog-таймера и пять внутрипроцессных eve schedules - эксплуатация описана в [docs/deploy.md](docs/deploy.md).
 
 **Зачем вам это** → [25+ живых сценариев - бизнес, работа, жизнь](docs/ru/use-cases.md).
 
@@ -89,6 +95,9 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 
 ## Что умеет
 
+<details>
+<summary><b>Голос, зрение, память, личный CRM, Google Workspace, скиллы - развернуть полный список</b></summary>
+
 - 🎙️ **Голос** - голосовые, аудио и видеосообщения расшифровывает Deepgram nova-3; язык (ru/uz/en) определяет сама.
 - 👁️ **Зрение** - фото описывает vision-модель вашего же провайдера; ни лишнего ключа, ни лишнего счёта.
 - 🧾 **Живые ответы** - таблицы, чек-листы, сворачиваемые блоки и формулы рендерятся прямо в Telegram (rich messages Bot API 10.1); обычное форматирование идёт проверенным путём, с мягким откатом при сбое.
@@ -101,33 +110,27 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 - 🌐 **Поиск в интернете** - четыре провайдера на выбор: Tavily, Exa, Parallel или Brave.
 - 📮 **Google Workspace** - Gmail, Календарь, Drive, Таблицы, Документы и Задачи прямо из чата через CLI `gws`; ставится сам, а подключение ключа проходите по шагам прямо в переписке.
 - 🧩 **Скиллы и MCP** - один файл, чтобы добавить процедуру или подключить MCP-сервер; ключи остаются в `.env`.
-- 🧪 **Личный Telegram - userbot (бета)** - читать и отправлять от *вашего собственного* аккаунта, а не только от бота; подключение прямо в чате (QR, без терминала). Сырой и капризный - включается вручную, **на ваш страх и риск**. Серверный анти-бан (FloodWait, случайные паузы, circuit-breaker) вшит в код, а не просто рекомендован. [Подробности](docs/userbot.md).
+- 🧪 **Личный Telegram - userbot (бета)** - читать и отправлять от _вашего собственного_ аккаунта, а не только от бота; подключение прямо в чате (QR, без терминала). Сырой и капризный - включается вручную, **на ваш страх и риск**. Серверный анти-бан (FloodWait, случайные паузы, circuit-breaker) вшит в код, а не просто рекомендован. [Подробности](docs/userbot.md).
 - 🛡️ **Можно пересылать что угодно** - ссылки, PDF и чужие сообщения проверяются до того, как их прочитает модель.
 - 📊 **Учёт токенов** - каждый шаг модели логируется; `/usage` бесплатно показывает расход.
+
+</details>
 
 ## Память - то, что копится
 
 <img src="assets/iva-memory-tree.webp" alt="Как Iva помнит: лист - день, ветви - недели и месяцы, годовые кольца - годы вокруг CORE.md" width="100%">
+
+| Слой      | Что там живёт                                                                                                     | Путь                                                 |
+| --------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 🍃 Листья | дословный транскрипт каждого дня, вместе с ответами Iva                                                           | `daily/YYYY-MM-DD.md`                                |
+| 🌿 Ветви  | сводки, свёрнутые вверх: день → неделя → месяц → год                                                              | `summaries/daily/`, `weekly/`, `monthly/`, `yearly/` |
+| 🪵 Ствол  | `CORE.md` (≤1200 символов, в каждом промпте) + типизированные карточки: контакты, проекты, решения, идеи, заметки | `CORE.md`, `cards/`                                  |
 
 - Каждое сообщение падает в дневной markdown-лог дословно - на входе ничего не пересказывается.
 - Ночная сборка в 04:00 сворачивает день → неделю → месяц → год в карточки, проверенные по схеме; изменившиеся факты переписываются, а не копятся.
 - Один core-файл, `CORE.md` (≤1200 символов), едет в каждом промпте - Ива знает вас ещё до всякого поиска.
 
 Полная архитектура и устройство поиска: [docs/ru/memory.md](docs/ru/memory.md).
-
-## Быстрый старт
-
-1. Возьмите токен бота у [@BotFather](https://t.me/BotFather).
-2. Запустите однострочный установщик выше на любой машине с Ubuntu/Debian - свежем VPS или собственном компьютере.
-3. Напишите своему боту. Мастер достанет ваш Telegram ID из этого сообщения, закончит настройку, и Ива прямо в чате подтвердит, что работает.
-
-Для установки без диалога есть `--skip-setup` и `--non-interactive`. Прохождение мастера шаг за шагом и SSH-ликбез для тех, у кого VPS впервые: [docs/ru/install.md](docs/ru/install.md).
-
-## Как это работает
-
-<img src="assets/iva-flow.webp" alt="Как работает Iva: голосовые, тексты, фото и PDF летят из Telegram в агента-иву, вокруг - память, ночная сборка, cron, напоминания, поиск, веб, workspace и документы" width="100%">
-
-Мост опрашивает Telegram через long-poll, так что публичный HTTPS, домен и webhook не нужны. Ива работает как два systemd user service, два systemd watchdog-таймера и пять внутрипроцессных eve schedules - эксплуатация описана в [docs/deploy.md](docs/deploy.md).
 
 ## Секретарь в Telegram
 
@@ -142,38 +145,54 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 
 Автоматизация личного аккаунта нарушает правила Telegram: включаете на свой риск, чтение безопаснее отправки. Подробности: [docs/userbot.md](docs/userbot.md).
 
-## Провайдеры и цена
-
-Четыре провайдера модели. Выбираете одного и заполняете его блок в `.env`:
-
-| Провайдер | Как платите |
-|---|---|
-| OpenCode Go | API-ключ, ~$5/мес |
-| Ollama Cloud | API-ключ, ~$20/мес |
-| OpenRouter | API-ключ, оплата по факту, 300+ моделей |
-| OpenAI (ChatGPT) | ваша подписка Plus/Pro, ключ не нужен |
-
-Модель по умолчанию deepseek-v4-pro, контекст 131k. На Go выходит около $9/мес со всем ($5 модель плюс $4-5 VPS), без наценки; голос едет на бесплатном кредите Deepgram. Списки моделей, лимиты и матрица поиска: [docs/providers.md](docs/providers.md).
-
 ## Безопасность и приватность
 
 <img src="assets/iva-security-gate.webp" alt="Недоверенный ввод из Telegram, веба и почты проходит гейт безопасности: заражённые сообщения падают в отсев, до vault доходит только чистый контекст" width="100%">
 
 Входящий контент проходит санитайзер prompt-инъекций, каждый ответ - гейт вычистки секретов, а allowlist пользователей закрыт по умолчанию: пустой список не отвечает никому. Ваша память - приватный git-репозиторий, который принадлежит вам; честная граница в том, что модель и расшифровка - облачные API, которые вы сами выбираете и оплачиваете. Устройство гейтов: [docs/ru/security.md](docs/ru/security.md).
 
-## Команды
+## Установка
 
-| В Telegram | На сервере |
-|---|---|
-| `/menu` · `/help` · `/task` · `/digest` · `/new` · `/update` · `/usage` | `iva status` · `iva update` · `iva doctor` · `iva logs` |
+Одна команда на любой машине с Ubuntu/Debian - свежем VPS или собственном компьютере:
 
-`/menu` открывает центр настроек одним сообщением - модель, веб-поиск, язык, тест характера и интервью памяти. Он остаётся отзывчивым, даже когда Ива занята, и не тратит токены модели: [docs/menu.md](docs/menu.md).
+```bash
+curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
+```
 
-Полный справочник, включая разбивку `/usage` по моделям и источникам: [docs/cli.md](docs/cli.md).
+1. Возьмите токен бота у [@BotFather](https://t.me/BotFather).
+2. Запустите установщик и ответьте на его вопросы.
+3. Напишите своему боту. Мастер достанет ваш Telegram ID из этого сообщения, закончит настройку, и Ива прямо в чате подтвердит, что работает.
+
+Для установки без диалога есть `--skip-setup` и `--non-interactive`. Прохождение мастера шаг за шагом и SSH-ликбез для тех, у кого VPS впервые: [docs/ru/install.md](docs/ru/install.md).
+
+<details>
+<summary><b>Установка из исходников - собрать из клона самому</b></summary>
+
+```bash
+git clone https://github.com/smixs/iva.git ~/iva
+cd ~/iva && bash install.sh
+```
+
+Установщик переиспользует существующий чекаут вместо повторного клонирования, не трогает `.env` и vault и ставит те же зависимости. Форк или ветка задаются переменными, которые скрипт читает на старте: `REPO_URL=…`, `BRANCH=…`, `INSTALL_DIR=…` (по умолчанию: этот репозиторий, `main`, `~/iva`). Подробности: [docs/ru/install.md](docs/ru/install.md).
+
+</details>
+
+## Провайдеры и цена
+
+Четыре провайдера модели. Выбираете одного и заполняете его блок в `.env`:
+
+| Провайдер        | Как платите                             |
+| ---------------- | --------------------------------------- |
+| OpenCode Go      | API-ключ, ~$5/мес                       |
+| Ollama Cloud     | API-ключ, ~$20/мес                      |
+| OpenRouter       | API-ключ, оплата по факту, 300+ моделей |
+| OpenAI (ChatGPT) | ваша подписка Plus/Pro, ключ не нужен   |
+
+Модель по умолчанию deepseek-v4-pro, контекст 131k. На Go выходит около $9/мес со всем ($5 модель плюс $4-5 VPS), без наценки; голос едет на бесплатном кредите Deepgram. Списки моделей, лимиты и матрица поиска: [docs/providers.md](docs/providers.md).
 
 ## Документация
 
-[Юзкейсы](docs/ru/use-cases.md) · [Установка](docs/ru/install.md) · [Настройка](docs/ru/configuration.md) · [Память](docs/ru/memory.md) · [Провайдеры](docs/providers.md) · [Безопасность](docs/ru/security.md) · [Деплой](docs/deploy.md) · [CLI](docs/cli.md) · [Расширение](docs/extending.md) · [FAQ](docs/ru/faq.md) · [Решение проблем](docs/troubleshooting.md)
+[Юзкейсы](docs/ru/use-cases.md) · [Установка](docs/ru/install.md) · [Настройка](docs/ru/configuration.md) · [Память](docs/ru/memory.md) · [Провайдеры](docs/providers.md) · [Безопасность](docs/ru/security.md) · [Деплой](docs/deploy.md) · [Команды и CLI](docs/cli.md) · [Меню](docs/menu.md) · [Расширение](docs/extending.md) · [FAQ](docs/ru/faq.md) · [Решение проблем](docs/troubleshooting.md)
 
 Документация на английском → [docs/](docs/)
 
@@ -183,13 +202,7 @@ curl -fsSL https://raw.githubusercontent.com/smixs/iva/main/install.sh | bash
 
 ## Спасибо
 
-Ива становится лучше, потому что люди гоняют её по-настоящему - присылают патчи и сообщают о том, что реально ломается.
-
-Вклад кодом: [@yakovmakovets](https://github.com/yakovmakovets), [@AndyShaman](https://github.com/AndyShaman), [@lidmitry19](https://github.com/lidmitry19), [@anupamme](https://github.com/anupamme), [@snjrusmn](https://github.com/snjrusmn), [@865x44](https://github.com/865x44).
-
-Репорты и предложения, сформировавшие релизы: [@shamulin-hamnoi](https://github.com/shamulin-hamnoi), [@AndyShaman](https://github.com/AndyShaman), [@mamysh](https://github.com/mamysh), [@snjrusmn](https://github.com/snjrusmn), [@D1msn](https://github.com/D1msn), [@865x44](https://github.com/865x44), [@neproger](https://github.com/neproger), [@litrokol](https://github.com/litrokol).
-
-Нашли что-то? [Заводите issue](https://github.com/smixs/iva/issues).
+Ива становится лучше, потому что люди гоняют её по-настоящему - контрибуторам мы рады. [Заводите issue](https://github.com/smixs/iva/issues) о том, что сломалось, или присылайте PR. Все, кто уже помог: [docs/thanks.md](docs/thanks.md).
 
 ## Лицензия
 

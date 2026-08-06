@@ -6,14 +6,16 @@
 // digestSchedule.enabled is explicitly true. No lockPath: the digest doesn't touch
 // vault/CORE.md or MOC.md, so it doesn't need to serialize with the memory rollups.
 import { defineSchedule } from "eve/schedules";
-import { readSettings } from "../lib/settings.mjs";
-import { resolvePaths } from "../lib/schedule-paths.mjs";
-import { runScheduledJob } from "../../scripts/lib/schedule-runner.mjs";
+import { readSettings } from "../lib/settings.js";
+import { resolvePaths } from "../lib/schedule-paths.js";
+import { runScheduledJob } from "../../scripts/lib/schedule-runner.ts";
 
 export default defineSchedule({
   cron: "0 8 * * *",
   run({ waitUntil }) {
-    const settings = readSettings() as { digestSchedule?: { enabled?: boolean } };
+    const settings = readSettings() as {
+      digestSchedule?: { enabled?: boolean };
+    };
     if (settings.digestSchedule?.enabled !== true) return;
 
     const { root, statusPath } = resolvePaths();

@@ -9,7 +9,7 @@ import { join } from "node:path";
 // turn.started, как в 20-core.ts. Персона в instructions.md остаётся языково-нейтральной —
 // это по-прежнему единственный источник правды о языке вывода.
 //
-// Разрешение языка продублировано инлайн, а НЕ импортом agent/lib/i18n.mjs:
+// Разрешение языка продублировано инлайн, а НЕ импортом agent/lib/i18n.ts:
 // инструкции самодостаточны — только eve + node fs/path (гоча eve 0.11.4: authored-
 // модули проекта тут не резолвятся при сборке).
 const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
@@ -20,8 +20,13 @@ const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
 // молча падаем в env-фолбэк.
 function resolveLang(): string {
   try {
-    const parsed = JSON.parse(readFileSync(join(DATA_DIR, "settings.json"), "utf8"));
-    const language = parsed?.language;
+    const parsed: unknown = JSON.parse(
+      readFileSync(join(DATA_DIR, "settings.json"), "utf8"),
+    );
+    const language =
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>).language
+        : undefined;
     if (language === "ru" || language === "en") return language;
   } catch {
     // нет файла (меню ни разу не меняло язык) / нет доступа / битый JSON.

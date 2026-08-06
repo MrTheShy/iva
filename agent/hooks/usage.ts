@@ -1,5 +1,5 @@
 import { defineHook } from "eve/hooks";
-import { appendUsage, subagentTurnId } from "../../scripts/lib/usage.mjs";
+import { appendUsage, subagentTurnId } from "../../scripts/lib/usage.ts";
 
 // Учёт фактического расхода токенов. ОДИН хук ловит весь расход одного eve-агента без
 // двойного счёта: основной чат (channel.kind="telegram") и фоновые джобы через eve/client —
@@ -19,7 +19,10 @@ const MODEL =
     : PROVIDER === "openrouter"
       ? (process.env.OPENROUTER_MODEL ?? "openai/gpt-5.1")
       : PROVIDER === "opencode"
-        ? (process.env.OPENCODE_MODEL ?? "deepseek-v4-pro").replace(/^opencode-go\//, "")
+        ? (process.env.OPENCODE_MODEL ?? "deepseek-v4-pro").replace(
+            /^opencode-go\//,
+            "",
+          )
         : (process.env.OLLAMA_MODEL ?? "deepseek-v4-pro");
 
 interface StepData {
@@ -33,7 +36,12 @@ interface StepData {
   };
 }
 
-function record(data: StepData, sessionId: string, source: string, subagent?: string): void {
+function record(
+  data: StepData,
+  sessionId: string,
+  source: string,
+  subagent?: string,
+): void {
   const u = data.usage;
   if (!u) return;
   const inT = u.inputTokens ?? 0;
@@ -70,14 +78,18 @@ export default defineHook({
     // значит ключ sessionId:turnId столкнулся бы с каким-то ходом родителя (сразу после
     // /new — с его же текущим turn_0, позже — с давним одноимённым). Пишем ход РОДИТЕЛЯ
     // с суффиксом: ключ уникален по построению, а привязка к ходу сохраняется, поэтому
-    // расход субагента продолжает попадать в «итого за ход» (scripts/lib/usage.mjs).
+    // расход субагента продолжает попадать в «итого за ход» (scripts/lib/usage.ts).
     "subagent.event": (event, ctx) => {
       const inner = event.data.event;
       if (inner.type === "step.completed") {
         record(
           {
             ...inner.data,
-            turnId: subagentTurnId(ctx.session.turn, event.data.subagentName, inner.data.turnId),
+            turnId: subagentTurnId(
+              ctx.session.turn,
+              event.data.subagentName,
+              inner.data.turnId,
+            ),
           },
           ctx.session.id,
           ctx.channel.kind ?? "unknown",

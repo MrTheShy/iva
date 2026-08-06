@@ -8,8 +8,8 @@
 // the same lock the doctor script also takes, so a parallel monthly/yearly rollup on
 // Jan 1 still serializes instead of racing on CORE.md/MOC.md.
 import { defineSchedule } from "eve/schedules";
-import { memoryRollupJob } from "../lib/schedule-paths.mjs";
-import { runScheduledJob } from "../../scripts/lib/schedule-runner.mjs";
+import { memoryRollupJob } from "../lib/schedule-paths.js";
+import { runScheduledJob } from "../../scripts/lib/schedule-runner.ts";
 
 export default defineSchedule({
   cron: "0 4 * * *",

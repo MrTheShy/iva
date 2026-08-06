@@ -7,7 +7,7 @@ import { join } from "node:path";
 //
 // Хелпер appendDaily намеренно продублирован из telegram.ts — выносить в общий модуль
 // не стали из-за тривиальности (пара fs-вызовов), а НЕ из-за бандла: относительный
-// импорт из scripts/lib в бандл работает (см. scripts/lib/telegram-format.mjs, который
+// импорт из scripts/lib в бандл работает (см. scripts/lib/telegram-format.ts, который
 // импортируется в telegram.ts). Формат d_brain: `## HH:MM [type]` + контент.
 function appendDaily(type: string, content: string): void {
   const tz = process.env.ASSISTANT_TIMEZONE || undefined;
@@ -27,7 +27,11 @@ function appendDaily(type: string, content: string): void {
   const dir = join(process.env.ASSISTANT_VAULT_DIR || "vault", "daily");
   mkdirSync(dir, { recursive: true });
   // Append-only: существующие записи никогда не переписываются.
-  appendFileSync(join(dir, `${localDate}.md`), `\n## ${hhmm} ${type}\n${content}\n`, "utf8");
+  appendFileSync(
+    join(dir, `${localDate}.md`),
+    `\n## ${hhmm} ${type}\n${content}\n`,
+    "utf8",
+  );
 }
 
 export default defineHook({

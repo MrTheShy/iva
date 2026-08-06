@@ -10,14 +10,19 @@ const TIMEZONE = process.env.ASSISTANT_TIMEZONE ?? "Asia/Almaty";
 const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
 
 // settings.language ("ru"|"en") → env AGENT_LANGUAGE → "ru". Продублировано инлайн, а
-// НЕ импортом agent/lib/i18n.mjs: инструкции самодостаточны (гоча eve 0.11.4 —
+// НЕ импортом agent/lib/i18n.ts: инструкции самодостаточны (гоча eve 0.11.4 —
 // authored-модули проекта тут не резолвятся). Путь относителен cwd (iva.service стартует
 // с WorkingDirectory=/home/shima/iva), как VAULT в 20-core.ts. Ошибки/битый JSON молча
 // → env-фолбэк.
 function resolveLang(): string {
   try {
-    const parsed = JSON.parse(readFileSync(join(DATA_DIR, "settings.json"), "utf8"));
-    const language = parsed?.language;
+    const parsed: unknown = JSON.parse(
+      readFileSync(join(DATA_DIR, "settings.json"), "utf8"),
+    );
+    const language =
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>).language
+        : undefined;
     if (language === "ru" || language === "en") return language;
   } catch {
     // нет файла / нет доступа / битый JSON — берём язык из env-фолбэка ниже.

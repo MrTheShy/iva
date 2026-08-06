@@ -7,7 +7,8 @@
 //   2. fire-and-forget the systemd → eve-schedules migration (retire the old memory-rollup
 //      timers, catch up a missed period). This is the one reliable point in the codebase
 //      that always runs on the NEW server, even right after an `iva update` executed by
-//      the OLD CLI (bin/iva.mjs cmdUpdate doesn't know about eve schedules at all).
+//      the OLD CLI process (started through the permanent bin/iva.mjs shim) doesn't
+//      know about eve schedules at all.
 //
 // setup() runs before eve's own HTTP listener is guaranteed to be accepting connections.
 // A catch-up run spawns scripts/memory/rollup.ts, which opens an eve/client Client
@@ -26,11 +27,12 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { defineInstrumentation } from "eve/instrumentation";
-import { probeEveHealth } from "../scripts/lib/config-transaction.mjs";
-import { runScheduleMigration } from "../scripts/lib/schedule-migration.mjs";
-import { validateTimeZone } from "../scripts/lib/timezone.mjs";
+import { probeEveHealth } from "../scripts/lib/config-transaction.ts";
+import { runScheduleMigration } from "../scripts/lib/schedule-migration.ts";
+import { validateTimeZone } from "../scripts/lib/timezone.ts";
 
-const log = (...args: unknown[]) => console.log(new Date().toISOString(), ...args);
+const log = (...args: unknown[]) =>
+  console.log(new Date().toISOString(), ...args);
 
 const LISTENER_READY_TIMEOUT_MS = 120_000;
 
@@ -43,11 +45,15 @@ export default defineInstrumentation({
     // consumer throw a RangeError.
     const rawTz =
       process.env.ASSISTANT_TIMEZONE ||
-      (process.env.TZ && process.env.TZ !== "undefined" ? process.env.TZ : "UTC");
+      (process.env.TZ && process.env.TZ !== "undefined"
+        ? process.env.TZ
+        : "UTC");
     const validatedTz = validateTimeZone(rawTz);
     const tz = validatedTz ?? "UTC";
     if (validatedTz === null) {
-      log(`schedule-migration: invalid timezone ${rawTz} — falling back to UTC`);
+      log(
+        `schedule-migration: invalid timezone ${rawTz} — falling back to UTC`,
+      );
     }
     process.env.TZ = tz;
 
@@ -56,7 +62,9 @@ export default defineInstrumentation({
     try {
       const root = process.cwd();
       const dataDirRaw = process.env.ASSISTANT_DATA_DIR ?? "data";
-      const dataDir = dataDirRaw.startsWith("/") ? dataDirRaw : join(root, dataDirRaw);
+      const dataDir = dataDirRaw.startsWith("/")
+        ? dataDirRaw
+        : join(root, dataDirRaw);
       // Always loopback, deliberately NOT derived from ASSISTANT_HOST: the listener is
       // bound to 127.0.0.1 by iva.service (`eve start --host 127.0.0.1`) regardless of
       // what ASSISTANT_HOST says, and probeEveHealth only accepts loopback hostnames. A
@@ -68,7 +76,9 @@ export default defineInstrumentation({
 
       (async () => {
         try {
-          await probeEveHealth(healthUrl, { timeoutMs: LISTENER_READY_TIMEOUT_MS });
+          await probeEveHealth(healthUrl, {
+            timeoutMs: LISTENER_READY_TIMEOUT_MS,
+          });
         } catch (error) {
           log(
             "schedule-migration: HTTP listener not ready within",
@@ -86,10 +96,16 @@ export default defineInstrumentation({
           log,
         });
       })().catch((error: unknown) => {
-        log("schedule-migration failed:", error instanceof Error ? error.message : String(error));
+        log(
+          "schedule-migration failed:",
+          error instanceof Error ? error.message : String(error),
+        );
       });
     } catch (error) {
-      log("schedule-migration setup failed:", error instanceof Error ? error.message : String(error));
+      log(
+        "schedule-migration setup failed:",
+        error instanceof Error ? error.message : String(error),
+      );
     }
   },
 });

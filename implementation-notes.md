@@ -313,8 +313,8 @@
   - on read — `continuationTokenForControl`, the stale-run reaper (which reads
     `status.continuationToken` directly) and `reconcileScopedResetIntents` (a durable intent
     may have been written by an older version).
-  Statuses poisoned by earlier versions therefore heal on the next turn or `/new` instead of
-  needing a migration.
+    Statuses poisoned by earlier versions therefore heal on the next turn or `/new` instead of
+    needing a migration.
 - On an Eve bump: re-check what `channel.continuationToken` yields in event handlers. If Eve
   ever hands out the channel-local token there, the helper stays correct (it is idempotent),
   but `scripts/lib/telegram-reset.test.mjs` is the place that pins the expectation. If the
@@ -337,7 +337,7 @@
 - One line per model step in `data/usage.jsonl`, grouped into turns. `sessionId:turnId` is not
   unique on its own: Eve numbers turns per session as `turn_<sequence>`, so a week-old `turn_0`
   and today's `turn_0` look identical, and an inline subagent restarts the counter while the
-  hook records its steps under the *parent* `sessionId`.
+  hook records its steps under the _parent_ `sessionId`.
 - The write side removes the ambiguity: a subagent step is logged with the parent's turn id and
   a suffix, `<parent turnId>#<subagentName>` (`agent/hooks/usage.ts`). The key is unique by
   construction, and the part before `#` keeps the step attached to the parent turn, so the
@@ -378,12 +378,14 @@
   presence of an empty string records a successful empty result.
 - Both stores use the existing JSON-store primitives and bounded JSON files under
   `ASSISTANT_DATA_DIR`; no delivery timeout or direct-delivery policy changed.
+
 ## Rollup writer safety (v0.3.11)
 
 - База ветки: `origin/main` (`b464b74a22eb4f2c0dce4ab888d2a9b62bad0658`).
 - Fresh retry сохраняет прежнюю единственную попытку только для явно отклонённого `send` или терминально подтверждённой отмены.
 - Зависший до разрешения `send` считается потенциально принятым сервером: ответ `cancel: accepted` только принимает сигнал и не разрешает retry. Безопасную границу подтверждает `no_active_turn` либо событие `turn.cancelled` в дочитанном потоке.
 - При неподтверждённой отмене сохранённый курсор остаётся на диске, а исходная ошибка выходит наверх.
+
 ## Security honesty and documentation sync (v0.3.11)
 
 - Media-processing errors use the same token-redacted detail in user messages and model
@@ -409,6 +411,7 @@
   four memory-schedule status records, while `iva status` reports systemd units only.
 - PHILOSOPHY.md now records the project boundary rules and explicit removal points for
   local workarounds.
+
 ## Memory and configuration integrity (v0.3.11)
 
 - TypeScript and Python frontmatter parsers keep blank lines inside block scalars. Strings
@@ -422,6 +425,7 @@
 - CORE truncation removes a mutable bullet when fewer than two marker characters survive;
   a complete `-` plus its following space may still receive the ellipsis. Pointers remain
   immutable.
+
 ## Telegram offset durability (v0.3.11)
 
 - Only ENOENT represents first run. Existing JSON, schema, permission, and I/O failures stop
@@ -432,6 +436,7 @@
 - The first-run tail lookup also fails closed on Telegram or response-shape errors; falling
   back to offset 0 after such an error could replay the installation backlog. An actually empty
   Telegram result still stores offset 0. Per-call tmp suffixes avoid overlap.
+
 ## Schedule migration durability (v0.3.11)
 
 - Memory catch-up baselines are seeded per key under the shared status lock. Existing
@@ -442,6 +447,7 @@
   while old ownerless markers keep the time-based compatibility rule.
 - Completion and cleanup mutate status only while holding the status lock and keep a
   reservation marked locally until its removal write succeeds.
+
 ## fix/reminder-node-runtime
 
 - Kept the security gate deterministic and dependency-free.
@@ -493,3 +499,858 @@
   examples containing structural headings remain byte-identical.
 - The dbrain skill chooses semantic operations, rereads every touched card, and
   consumes compile candidates; deterministic code keeps structural invariants.
+
+## TypeScript migration (PR-0 through PR-12)
+
+### 2026-08-06 (Asia/Tashkent)
+
+- Bootstrap completed on `main` at `d099da5`: `npm ci`, `npm run typecheck`, and
+  `npm run build` passed. The approved handoff plan remains an untracked local
+  file at `notes/plans/2026-08-06-ts-migration.md` and is excluded from migration
+  commits.
+- The factual PR-0 baseline is 160 tracked `.mjs` files and 73 tracked
+  `*.test.mjs` files. PR #151 added `scripts/golden-parsers.test.mjs` after the
+  handoff recorded 159 and 72, so discovery equivalence uses 73 files.
+- `@eslint/js` and `globals` are direct development dependencies because the flat
+  config imports both. TypeScript is constrained to `~6.0.3`, matching
+  typescript-eslint's `<6.1.0` peer range. A newly disclosed transitive
+  `brace-expansion` audit finding was cleared by resolving its patched 5.0.9
+  release before the dependency commit.
+- Prettier uses its defaults because the plan sets no style overrides. The local,
+  untracked handoff path is ignored so `npm run format` and `format:check` do not
+  rewrite or reject that approved input.
+- PR-0 must add `eslint.config.mjs`, increasing the post-infrastructure tracked
+  count from 160 to 161. The PR-0 ratchet therefore starts at the factual 161;
+  PR-12 will convert the config to `eslint.config.ts` so the final five-file
+  acceptance remains reachable.
+- The underspecified and overlapping conversion layers are partitioned uniquely:
+  PR-1 handles the first 13 `scripts/lib` leaves; PR-2 the next 13; PR-3 the final
+  nine leaves plus four menu leaves. PR-4 owns six middle core modules, six menu
+  screens, and poller config. PR-5 owns six middle runtime modules, two menu
+  screens, and poller transport/offset. PR-6 owns only the seven remaining poller
+  modules and two fixtures; PR-7 owns the remaining menu service/index pair.
+- Because PR-6's `poller/control.ts` must import the still-JavaScript menu hub, PR-6
+  will add a narrow temporary `menu/index.d.mts` declaration and PR-7 will remove
+  it with the real `index.ts`. This preserves the approved ordering and runtime
+  import semantics.
+- Final `.mjs` reference verification treats references to the five approved shim
+  paths as an explicit allowlist. Install scripts, units, package metadata, and
+  runtime string paths must keep those references; every other live `.mjs`
+  reference must be removed.
+- While starting PR-0, the existing implementation notes were accidentally
+  replaced locally. They were restored byte-for-byte from `HEAD` before any
+  commit, this append-only section was added, and the local rule now requires an
+  additions-only diff check before committing notes.
+- Typed lint exposed unchecked JSON and framework boundaries in existing
+  TypeScript. Valid payload behavior is unchanged; malformed Telegram collector
+  parts are now filtered, nonnumeric Telegram `message_id` values are ignored,
+  and malformed persisted graph/schema/session/history objects take their
+  existing empty/fallback paths. Non-finite persisted numeric values are also
+  rejected. A regression test covers malformed collector entries.
+- The existing run-status lock-timeout text includes its resolved lock path.
+  PR-0 preserves that diagnostic to keep lint cleanup behavior-neutral and drops
+  the caught OS error from `cause`; sanitizing the legacy message is deferred as
+  a separate behavior change.
+- The first post-Prettier full suite exposed that
+  `scripts/autograph/tests/golden/` contains byte-significant parser fixtures.
+  Seventeen formatted fixtures were restored from pre-migration `main`, and the
+  directory is now ignored by Prettier. The same run also hit the existing
+  `timeout leaves no TERM-resistant child PID behind` timing test once; that
+  isolated test must pass before treating it as a blocker.
+- The old explicit CI globs and Node 24 default discovery both select the same 73
+  tracked test files. Both commands completed with 595 passing tests, so `npm
+test` now uses `node --test`.
+- Native Node coverage measured 72.62% lines, 79.13-79.15% branches, and 71.59%
+  functions across repeated full runs. Integer floors of 72, 79, and 71 are the
+  initial deterministic CI thresholds; later migration batches may only raise
+  them.
+- A local reproduction of the CI userbot gate creates `.venv-userbot/` in the
+  repository root. Prettier traversed that generated environment on later local
+  runs, so the environment is now explicitly ignored.
+- PR-1 converts 13 leaf modules and 10 dedicated tests, removes three superseded
+  declarations, and lowers the `.mjs` ratchet from 161 to 138. `core-cap`,
+  `model-summary`, and `progress` already have characterization coverage through
+  `core-clamp.test.mjs` and `update-ui.test.mjs`; no pre-conversion test gap was
+  present in this batch.
+- PR-1 keeps permissive runtime coercion at the core-interview and mock-provider
+  fixture boundaries while exposing strict types to callers. Narrow lint
+  suppressions document those two legacy coercions; application JSON boundaries
+  use `unknown` and explicit record guards.
+- PR-1 review identified three pre-existing behavior gaps, deliberately deferred
+  from the conversion commit: the oversize-memory scan omits files present only
+  in the Git index, the synchronous Docker port probe has no timeout, and
+  `upsertEnv` accepts key names outside its parser grammar. Each requires its own
+  regression test and behavior commit.
+- 2026-08-06: PR-2 converts 13 additional leaf modules and 11 related tests, removes five
+  superseded declarations, and lowers the `.mjs` ratchet from 138 to 114.
+  `reasoning-levels` is characterized through the model and OAuth suites, while
+  `telegram-reset-intent` was already exercised through the poller queue suites.
+  A separate pre-conversion characterization commit adds its direct durable
+  lifecycle, invalid-record, and filename-integrity cases so the native branch
+  coverage gate has deterministic headroom.
+- 2026-08-06: `telegram-queue.test.ts` still imports the eternal `telegram-poll.mjs` shim
+  before the poller implementation moves to TypeScript. PR-2 adds the narrow
+  temporary `scripts/telegram-poll.d.mts` bridge for the two exports that test
+  consumes; PR-6 must delete it when the poller and shim boundary are converted.
+- 2026-08-06: PR-2 typing review found five pre-existing behavior defects and leaves them for
+  separate TDD fixes: quiz answer lookup accepts inherited/array property names
+  such as `"length"` despite documenting invalid answers as neutral; quiz summary
+  and persona fallback select the WVPF card but still crash on an unknown code;
+  Telegram Markdown placeholder restoration can delete ordinary text matching
+  two spaces, digits, two spaces; the Telegram HTML sanitizer preserves unsafe
+  `javascript:` and `data:` anchor schemes; and outbound security findings retain
+  the first 12 characters of matched credentials in `preview`.
+- 2026-08-06: The first full PR-2 suite, run concurrently with the full typed
+  linter, hit the unrelated timing-sensitive `minimum deadline is enforced while
+the Node event loop is blocked` assertion once. Two later sequential suites hit
+  the same assertion while unrelated VPS builds drove the load average above 11;
+  every isolated rerun passed. The conversion does not touch the bash tool, and a
+  complete clean suite is still required before push.
+- 2026-08-06 07:02 Asia/Tashkent: The first full Node 24 suite after transfer to
+  macOS exposed two pre-existing portability gaps. Rich-post compared realpath
+  candidates against a symlinked `/var` data root, and two Linux process-group
+  tests assumed `setsid` existed. Separate commits `59be5e7` and `63536a6`
+  normalize the media roots and skip only those two cases when `setsid` is absent;
+  the staged PR-2 conversion remained byte-identical at its handoff SHA-256.
+- 2026-08-06 07:02 Asia/Tashkent: The next complete local suite passed cleanly
+  after transfer: 594 passed, zero failed, and four expected platform skips (two
+  existing `flock` skips plus the two unavailable-`setsid` cases).
+- 2026-08-06 07:08 Asia/Tashkent: The first post-rebase full-suite retry hit the
+  pre-existing 1.5-second `userbot-health-cli` probe budget once, returning
+  `probe_timeout` under full-suite load. The PR-2 conversion does not touch that
+  path; three immediate isolated reruns passed in 675, 590, and 584 ms. A clean
+  full-suite retry remains required before push.
+- 2026-08-06 Asia/Tashkent: PR-2 deliberately keeps `security-gate.mjs` and
+  `telegram-format.mjs` canonical, with their `.d.mts` declarations and the
+  agent's thin typed security-gate re-export. One-shot reminder timers still run
+  `telegram-send.mjs` under stock system Node; converting either shared module
+  before that entry point would recreate the 0.3.12 failure where bare Node loads
+  TypeScript before sending. Their production conversion moves with
+  `telegram-send` to preserve the runtime boundary; `security-gate.test.ts` stays
+  converted and exercises the canonical JS module through its restored
+  declaration. The corrected PR-2 scope is 11 production modules, 12 test files,
+  three removed declarations, and an `.mjs` budget of 116.
+- 2026-08-06 Asia/Tashkent: Full-suite discovery on the high-core local machine
+  intermittently starved the existing 1.5-second `userbot-health-cli` integration
+  probe even though repeated isolated runs completed in 584-675 ms. Both Node
+  test scripts now cap file concurrency at four: this preserves automatic test
+  discovery and the production timeout while preventing unrelated test workers
+  from turning the timing assertion into a load-dependent failure. Two
+  successive bounded full suites passed all 598 tests with the four expected
+  platform skips.
+- 2026-08-06 Asia/Tashkent: Independent post-conversion review found that the
+  typed `systemd-control` cleanup helper had narrowed the legacy diagnostic
+  fallback from duck-typed `cause.message || String(cause)` to
+  `Error.message`. A separate regression fix restores the original behavior for
+  error-like objects and empty `Error` messages; focused tests now preserve both
+  cases without changing cleanup control flow.
+- 2026-08-06 Asia/Tashkent: Review also found that converting
+  `schedule-runner.d.mts` into the implementation had accidentally made the
+  options argument optional to TypeScript callers. An exported overload restores
+  the declaration's required options contract while the implementation keeps its
+  pre-existing runtime default for untyped JavaScript callers. A compile-time
+  regression assertion guards both sides of that compatibility boundary.
+- 2026-08-06 Asia/Tashkent: Review confirmed a pre-existing search-key probe
+  leak: Node removes `Authorization` on a cross-origin redirect but forwards the
+  custom Brave and Exa/Parallel credential headers. A separate security commit
+  sets `redirect: "error"`; the existing soft network-failure policy still
+  returns `null`. The same response lifecycle now cancels unread bodies without
+  allowing cancellation failures to change the probe result.
+- 2026-08-06 Asia/Tashkent: The shared Telegram queue options had long accepted
+  a nonce factory for quarantine paths, but atomic queue writes interpolated the
+  function object instead of invoking it. A separate regression fix normalizes
+  string and factory nonces at the write boundary; a direct test proves that
+  each write asks the factory for a fresh value.
+- 2026-08-06 Asia/Tashkent: Final PR-2 verification after all review fixes is
+  clean: the exact suite reports 601 tests, 597 passed, zero failed, and four
+  expected macOS skips. Coverage is 73.46% lines, 79.22% branches, and 71.69%
+  functions; the delta from PR-1 is +0.64, +0.18, and +0.16 percentage points.
+  Lint, formatting, the 116/116 `.mjs` ratchet, typecheck, build, replica,
+  autograph 343/343, security-defense 45/45, deterministic userbot lock, and
+  Python 3.12 userbot guardrail/health/compile gates all pass.
+- 2026-08-06 Asia/Tashkent: Final adversarial review found three queue catch
+  sites where TypeScript assertions had removed the source module's null-safe
+  `error?.code` access at runtime. The separate compatibility fix restores
+  optional access and directly proves that nullish injected filesystem/link
+  failures are rethrown unchanged.
+- 2026-08-06 Asia/Tashkent: Native TypeScript stripping had materialized
+  type-only Error properties before their constructors ran, changing enumerable
+  key order from the source JavaScript. `declare` keeps the fields type-only;
+  constructor assignments now reproduce the original Rollup and systemd error
+  serialization order, covered by direct regression assertions.
+- 2026-08-06 Asia/Tashkent: The earlier PR-2 entries reporting 13 production
+  modules / 11 tests / budget 114 and later 601-test verification are historical
+  pre-boundary and pre-final-review snapshots, not the merge result. The final
+  confirmed scope is 11 production modules, 12 converted test files, three
+  removed declarations, and budget 116. After the last compatibility tests the
+  exact suite is 604 tests, 600 passed, zero failed, and four expected macOS
+  skips; coverage is 73.48% lines, 79.27% branches, and 71.64% functions, a
+  +0.66 / +0.23 / +0.11 percentage-point delta from PR-1. Every remaining local
+  and Python 3.12 gate was repeated successfully on this final tree.
+- 2026-08-06 Asia/Tashkent: A second coverage run on the same final tree kept
+  the stable 604 / 600 / 0 / 4 test result but reported 73.46% lines, 79.29%
+  branches, and 71.64% functions. The preceding percentages are therefore one
+  observed run, not invariant values: the verified range is 73.46-73.48% lines,
+  79.27-79.29% branches, and 71.64% functions, with a conservative delta from
+  PR-1 of at least +0.64 / +0.23 / +0.11 percentage points. Every observation
+  remains above the enforced coverage baseline.
+- 2026-08-06 Asia/Tashkent: PR-3 adds characterization tests for the four leaf
+  modules that lacked direct coverage before conversion: update-channel,
+  ts-esm-hooks, menu/root, and menu/skills. They are isolated in three atomic
+  test commits and pass 26/26 on Node 24.19.0 before any production rename.
+- 2026-08-06 Asia/Tashkent: PR-3 conversion work is partitioned into three
+  file-owned local worktrees (core resolver/channel, runtime data helpers, and
+  menu leaves). Only the final integrated branch will reach GitHub. This keeps
+  the required PR sequence intact and avoids spending CodeRabbit's five-PR-per-
+  hour allowance on intermediate work; no manual bot review pings are used.
+- 2026-08-06 Asia/Tashkent: The core worktree transport branch was accidentally
+  pushed to origin despite the local-only integration boundary. It never had a
+  PR and therefore triggered no CodeRabbit review; the exact remote branch was
+  verified and deleted immediately after its commit was integrated locally.
+- 2026-08-06 Asia/Tashkent: Lead review of the integrated PR-3 conversion found
+  type-only contract narrowing that the green runtime suite could not expose:
+  `UsageRecord` had become readonly and `summarize` no longer accepted the
+  declaration's dynamic string window. The implementation now preserves those
+  public TypeScript contracts while retaining precise overloads; direct compile-
+  time/runtime tests cover mutable records, dynamic windows, and the legacy
+  missing-source fallback. The same review removed conversion-only optional
+  child-stream/kill guards and restored exact null-safe coercion semantics at
+  the usage and workflow-store boundaries.
+- 2026-08-06 Asia/Tashkent: Final pre-commit PR-3 verification is clean on Node
+  24.19.0: 632 tests, 628 passed, zero failed, and four expected macOS skips.
+  Coverage is 74.14% lines, 79.52% branches, and 71.87% functions, a conservative
+  increase of at least +0.66 / +0.23 / +0.23 percentage points over the highest
+  observed merged PR-2 baseline. Lint, formatting, the exact 95/95 `.mjs`
+  ratchet, typecheck, build, replica, autograph 343/343, security-defense 45/45,
+  deterministic userbot lock, and Python 3.12 userbot guardrail/health/compile
+  gates all pass. Scope is 13 production modules, 12 converted test files, and
+  three removed declarations.
+- 2026-08-06 Asia/Tashkent: `origin/main` remained at the PR-2 merge during the
+  required PR-3 rebase. Every local and Python 3.12 gate was repeated on the
+  committed tree. The second coverage run again reports 632 / 628 / 0 / 4 and
+  74.16% lines, 79.55% branches, 71.87% functions. The verified PR-3 coverage
+  range is therefore 74.14-74.16% lines, 79.52-79.55% branches, and 71.87%
+  functions, with conservative improvement over PR-2 of at least
+  +0.66 / +0.23 / +0.23 percentage points.
+- 2026-08-06 Asia/Tashkent: CodeRabbit identified a pre-existing service-runner
+  defect outside the conversion itself: `Promise.resolve(onFinish())` evaluates
+  a synchronous callback before the promise exists, so a thrown completion hook
+  could escape a child-process event and crash the bridge. A separate bugfix
+  invokes the hook inside `.then()` and retains the rejection catch. The focused
+  regression test failed on the inherited implementation and passes after the
+  fix; the conversion commit remains unchanged. Post-fix verification is clean:
+  633 tests, 629 passed, zero failed, and four expected macOS skips; coverage is
+  74.14% lines, 79.55% branches, and 71.97% functions, with a conservative
+  PR-2 delta of at least +0.66 / +0.23 / +0.33 percentage points. Lint,
+  formatting, the exact 95/95 `.mjs` ratchet, typecheck, build, replica,
+  autograph 343/343, security-defense 45/45, deterministic userbot lock, and
+  Python 3.12 userbot guardrail/health/compile gates all pass. CodeRabbit's
+  incremental review also noted that the first regression could pass without
+  proving the hook ran; the test now records and asserts the callback invocation
+  before checking that its synchronous failure was contained. The strengthened
+  test leaves the suite at 633 / 629 / 0 / 4; its final coverage run reports
+  74.14% lines, 79.56% branches, and 71.97% functions, extending the verified
+  PR-3 range to 74.14-74.16 / 79.52-79.56 / 71.87-71.97%.
+- 2026-08-06 Asia/Tashkent: PR-3 merged as #155 with merge commit `8c538dc`
+  after CI passed, CodeRabbit approved the final head, and both review threads
+  were resolved. The review cadence was checked against current CodeRabbit Pro
+  documentation: the allowance is five PR review runs per developer in a rolling
+  hour, and automatic incremental reviews after pushes consume the same allowance.
+  PR-4 therefore stays local until its complete gate set passes; findings from its
+  first hosted review will be batched into one fix push where possible.
+- 2026-08-06 Asia/Tashkent: PR-4 follows the partition already fixed above: six
+  middle core modules (`codex-oauth`, `model-catalog`, `model-validation`,
+  `config-transaction`, `schedule-migration`, `memory/core-clamp`), six menu
+  screens (`character`, `core`, `crons`, `gws`, `lang`, `search`), and
+  `poller/config`. Direct TypeScript characterization is being added first for
+  the three modules without a focused direct suite: menu core, menu language,
+  and poller config. Three isolated worktrees own those tests; production code,
+  the ratchet, and this log remain lead-owned until integration.
+- 2026-08-06 Asia/Tashkent: PR-4's missing direct coverage was established before
+  conversion in three atomic characterization commits: menu core (three tests),
+  menu language (four tests), and poller config (four tests). All 11 tests passed
+  against the original JavaScript modules before the production renames.
+- 2026-08-06 Asia/Tashkent: The conversion integrates 13 production modules and
+  nine existing test-file conversions, removes five superseded declarations,
+  and lowers the `.mjs` budget from 95 to the exact tracked count of 73. All
+  importer, tripwire, runtime-comment, and current deployment-document paths
+  were updated in the same commit; historical CHANGELOG and notes references
+  remain intentionally unchanged.
+- 2026-08-06 Asia/Tashkent: Three independent adversarial reviews covered the
+  core/auth, menu, and poller groups. They found conversion-only semantic drift
+  at JavaScript exception and persistence boundaries: nullish transaction
+  causes had lost optional `message` access, three menu screens had started
+  coercing primitive errors, cron completion had narrowed legacy truthiness to
+  boolean `true`, and valid JSON primitives had moved from GWS shape validation
+  into the parse-error branch. The conversion now preserves the exact source
+  semantics, and focused regression coverage passes 19/19. Review also confirmed
+  the former declaration contracts, native Node 24 loading, and absence of live
+  imports of the removed `.mjs` paths.
+- 2026-08-06 Asia/Tashkent: Final pre-rebase PR-4 verification is clean on Node
+  24.19.0: 648 tests, 644 passed, zero failed, and four expected macOS skips.
+  Coverage is 74.99% lines, 79.22% branches, and 72.84% functions; versus the
+  highest observed merged PR-3 values this is +0.83 / -0.34 / +0.87 percentage
+  points, with all enforced 72/79/71 thresholds still satisfied. Lint,
+  formatting, the exact 73/73 `.mjs` ratchet, typecheck, build, replica,
+  autograph 343/343, security-defense 45/45, the deterministic userbot lock,
+  and Python 3.12 userbot guardrail/health/compile gates all pass. The Python
+  dependency gates used CI's pinned uv 0.8.3 rather than the host uv 0.8.4.
+- 2026-08-06 Asia/Tashkent: `origin/main` remained at the PR-3 merge during the
+  required PR-4 rebase. After a clean Node 24 `npm ci`, every local and Python
+  gate was repeated on the committed tree. The second coverage run again reports
+  648 / 644 / 0 / 4 and 75.03% lines, 79.29% branches, and 72.84% functions.
+  The verified PR-4 coverage range is therefore 74.99-75.03 / 79.22-79.29 /
+  72.84%, with a conservative merged-PR-3 delta of +0.83 / -0.34 / +0.87
+  percentage points. The exact PR diff check remains clean, and only the two
+  approved untracked handoff files remain outside Git.
+- 2026-08-06 Asia/Tashkent: PR-4's first hosted CodeRabbit run produced six
+  comments. Two requests to restore `.test.mjs` entry points conflict with the
+  approved migration plan and are deferred to the planned PR-12 convention
+  update. The request to make schedule-migration error normalization null-safe
+  would change the source module's direct `error.message` behavior and was also
+  rejected as conversion scope drift. The token-shaped poller fixture was
+  cleaned up without changing its value. Two valid pre-existing boundary bugs
+  were fixed in separate commits: Codex JWT account claims now accept only
+  non-empty strings, and search-provider inputs now require own catalog keys
+  instead of accepting inherited names such as `toString`.
+- 2026-08-06 Asia/Tashkent: Post-review verification is clean: 650 tests, 646
+  passed, zero failed, and four expected macOS skips. Coverage is 75.18% lines,
+  79.27% branches, and 73.11% functions. Lint, formatting, 73/73 ratchet,
+  typecheck, build, replica, autograph 343/343, security-defense 45/45,
+  deterministic userbot lock, and Python 3.12 userbot gates all pass. The three
+  review fixes will be delivered in one incremental push to conserve the Pro
+  review allowance.
+- 2026-08-06 Asia/Tashkent: PR-4 merged as #156 with merge commit `0723365`
+  after the single batched review-fix push passed CI, CodeRabbit approved the
+  final head, and all six review threads were resolved. Final scope is 13
+  production conversions, nine existing test-file conversions, three new
+  characterization files, five removed declarations, and `.mjs` budget 73.
+- 2026-08-06 Asia/Tashkent: PR-5 is partitioned into ten production conversions:
+  six middle runtime modules, menu status/userbot, and poller transport/offset.
+  Seven existing `.mjs` tests move with them, two declarations are removed, and
+  the derived target budget is 56. Three isolated worktrees own delivery/turn,
+  update runtime/UI, and reset/menu/poller respectively. The third group must
+  commit direct menu-status and poller-transport characterization against the
+  original JavaScript before its conversion; the lead retains the ratchet,
+  integration notes, shared `update-flow` transport specifier, and final review.
+- 2026-08-06 Asia/Tashkent: PR-5 characterization landed before conversion in
+  two atomic commits: menu status covers fast initial rendering and stale async
+  edit suppression, while poller transport covers the exact byte cap, oversize
+  cancellation, and reader failure. The five direct tests passed against the
+  original `.mjs` implementations. Three isolated conversion worktrees were
+  then integrated without retaining their intermediate worker commits, so the
+  branch has one shared conversion commit after the two characterization
+  commits.
+- 2026-08-06 Asia/Tashkent: Independent cross-review found two behavior drifts
+  in the update-runtime partition before commit. Telegram status had normalized
+  a structurally valid thrown `{ message, status }` value into a generic Error,
+  losing the HTTP status used for custom-emoji fallback. Stable-version parsing
+  had also stopped applying the original JavaScript `String(value ?? "")`
+  coercion. Both source behaviors were restored and protected by direct
+  regression tests. The shared poller transport specifier and two live design
+  references were updated from `.mjs` to `.ts`; active-code stale-import scans
+  are empty.
+- 2026-08-06 Asia/Tashkent: PR-5 conversion commit `e6e2591` contains ten
+  production conversions, seven existing test-file conversions, two removed
+  declarations, and the required importer updates. The ratchet is exactly
+  56/56. The focused conversion suite passed 68/68; the full suite passed 657
+  total, 653 passed, zero failed, and four expected macOS skips. Coverage is
+  75.91% lines, 79.06% branches, and 73.56% functions, a delta of +0.73 / -0.21
+  / +0.45 percentage points from the final merged PR-4 result. Lint, formatting,
+  typecheck, build, replica, Autograph 343/343, security-defense 45/45, pinned
+  uv 0.8.3 lock reproduction, and Python 3.12 userbot guardrail/health/compile
+  gates all pass. One typecheck invocation briefly failed to resolve the
+  installed `eve/hooks` export; an unchanged immediate rerun passed, so it was
+  recorded as a transient local dependency-resolution event rather than a code
+  failure.
+- 2026-08-06 Asia/Tashkent: `origin/main` remained at the PR-4 merge during the
+  required pre-push pull/rebase. The entire gate set was repeated on the
+  committed post-pull tree: 657 / 653 / 0 / 4, coverage 75.91% lines, 79.08%
+  branches, and 73.56% functions, exact 56/56 ratchet, lint, formatting,
+  typecheck, build, replica, both Python test suites, deterministic userbot
+  lock, and all Python 3.12 userbot checks are green. The PR diff check is clean,
+  and the two approved untracked handoff files remain outside Git.
+- 2026-08-06 Asia/Tashkent: PR-5's first hosted CodeRabbit run found one valid
+  minor coverage gap and no production defect: the exact transport byte-cap
+  characterization used only ASCII. A separate test-only commit retains that
+  assertion and adds an exact three-byte UTF-8 `€` case. The docstring-coverage
+  warning is a repository-wide optional finishing touch, not an inline code
+  finding or a migration acceptance gate. The fix will be delivered in the
+  single incremental push allotted to this review batch.
+- 2026-08-06 Asia/Tashkent: PR-5 merged as #157 with merge commit `5182f01`
+  after one batched test-only review fix, a green repeated CI run, CodeRabbit
+  approval, and the sole review thread resolved. Final scope is ten production
+  conversions, seven existing test-file conversions, two new characterization
+  files, two removed declarations, and `.mjs` budget 56. Final coverage is
+  75.91% lines, 79.08% branches, and 73.56% functions.
+- 2026-08-06 Asia/Tashkent: PR-6 starts from `5182f01`. The already-converted
+  poller config/transport/offset leaves seven production `.mjs` modules in the
+  cluster. The derived batch also converts two spawned fixtures and three
+  poller integration tests while preserving `scripts/telegram-poll.mjs` as the
+  permanent compatibility shim, for a target ratchet of 44. Three isolated
+  worktrees own queue/routing/delivery plus fixtures, control/update/wizards,
+  and main/shim respectively; the lead owns cross-partition specifiers, ratchet,
+  integration review, and final gates.
+- 2026-08-06 Asia/Tashkent: PR-6 characterization is committed separately from
+  conversion. Direct tests cover the main import contract; control's
+  delete-before-download secret flow; stale update cleanup; wizard guards,
+  selection, and stale async results; queue reset normalization; busy routing
+  enqueue/ack; and delivery acceptance receipts. The focused original-runtime
+  groups passed 35/35 and 16/16 before any corresponding source rename.
+- 2026-08-06 Asia/Tashkent: The first broad parallel conversion attempt exposed
+  too many simultaneous strict-type errors to review safely, so ownership was
+  repartitioned to one production module per worker. No `any`, `@ts-nocheck`,
+  `@ts-ignore`, or `@ts-expect-error` escape hatch is accepted. Completed lanes
+  are independently rechecked by the lead before integration; update-flow,
+  wizards, main/shim, delivery, and the reset integration test are now converted.
+  A short-lived `.mjs` re-export for delivery remains only until routing and
+  control switch to their final `.ts` imports within this PR.
+- 2026-08-06 Asia/Tashkent: Independent semantic cross-review rejected three
+  integration drifts before finalization. Main's control importer was switched
+  to the renamed `.ts` module. Wizard callback handling again preserves an
+  absent chat ID instead of substituting zero, and wizard error copy again uses
+  the thrown value's `message` field rather than the full Error string. Delivery
+  again passes the configured secret value through unchanged; a type assertion,
+  not a runtime empty-string fallback, satisfies the Fetch header contract.
+- 2026-08-06 Asia/Tashkent: A second cross-review found the converted crash-child
+  fixture's remaining caller in `telegram-queue.test.ts`; it now launches the
+  `.ts` path. Review also found that queue typing had replaced the original
+  subtraction-time coercion of `status.updatedAt` with a number-only fallback;
+  the source expression was restored with a type-only assertion. Queue,
+  routing, and both fixtures otherwise preserve the original runtime behavior.
+- 2026-08-06 Asia/Tashkent: PR-6 integration now contains all seven remaining
+  production poller conversions, two fixture conversions, and all three planned
+  test conversions. The permanent `scripts/telegram-poll.mjs` shim is exactly
+  ten lines; the temporary delivery re-export is removed. All active importer
+  tripwires point at `.ts`, and the derived ratchet is exactly 44.
+- 2026-08-06 Asia/Tashkent: The final pre-pull PR-6 gate set is green. The clean
+  Node 24 full suite reports 667 total, 663 passed, zero failed, and four expected
+  macOS skips. Coverage is 75.57% lines, 79.11% branches, and 73.01% functions,
+  a PR-5 delta of -0.34 / +0.03 / -0.55 percentage points. Lint, formatting,
+  exact 44/44 ratchet, ten-line shim check, typecheck, build, and replica all
+  exited zero. Replica still prints its pre-existing known-issue notice for
+  cross-restart session resume, then proves reset retirement and finishes `OK`
+  with five provider requests; no PR-6 poller path is implicated.
+- 2026-08-06 Asia/Tashkent: CI-equivalent Python gates pass under Python 3.12:
+  Autograph 343/343, security-defense 45/45, deterministic userbot lock with
+  pinned uv 0.8.3, strict hashed environment sync, guardrails, health, and
+  py_compile. The committed diff from the PR-5 merge and the working diff are
+  whitespace-clean; the two approved untracked handoff files remain outside Git.
+- 2026-08-06 Asia/Tashkent: `origin/main` remained at the PR-5 merge during the
+  required pull/rebase, so no commits were rewritten. The entire gate set was
+  repeated on the committed post-pull tree: Node 24 reports 667 total, 663
+  passed, zero failed, and four expected macOS skips; coverage is 75.57% lines,
+  79.12% branches, and 73.01% functions. Against PR-5 this is -0.34 / +0.04 /
+  -0.55 percentage points. Lint, formatting, exact 44/44 ratchet, the ten-line
+  shim check, typecheck, build, replica, Autograph 343/343, security-defense
+  45/45, uv 0.8.3 lock reproduction, and Python 3.12.13 userbot
+  guardrail/health/compile checks all pass. Replica again emitted only its
+  documented cross-restart known-issue notice before the successful reset and
+  final `OK`; the process exited zero. Two independent final read-only reviews
+  found no scope, semantics, stale-import, attribution, or diff-integrity
+  blocker.
+- 2026-08-06 Asia/Tashkent: PR-6's first hosted CodeRabbit run produced four
+  comments. Two valid test-only findings were fixed together: the update-flow
+  characterization now removes its temporary directory, and direct delivery
+  coverage proves that HTTP 204 without an acceptance receipt returns false
+  after one non-retrying request. Two production suggestions were declined
+  after independent verification. Replacing every dynamic-import façade with
+  `typeof import()` exposes three existing incompatible Telegram update shapes
+  and is not strict-clean without masking casts; aligning those domain types is
+  separate work. Normalizing non-object rejection values would change the
+  original `.mjs` exception identity and strict-mode failure behavior, contrary
+  to this batch's behavior-preserving conversion contract. The focused review
+  suite passed 17/17. The complete post-review gate set is also green: 667
+  total, 663 passed, zero failed, four expected macOS skips; coverage 75.62%
+  lines, 79.15% branches, and 73.01% functions; lint, formatting, typecheck,
+  exact 44/44 ratchet, ten-line shim, build, replica, both Python suites, pinned
+  uv 0.8.3 lock reproduction, and all Python 3.12 userbot checks.
+- 2026-08-06 Asia/Tashkent: PR-7 starts from PR-6 merge `b1b1b27`. Earlier
+  batches already converted twelve of the fourteen planned menu production
+  modules, leaving only `menu/index.mjs` and `menu/service.mjs`, plus
+  `service.test.mjs`. Their direct pre-conversion suites cover 29/29 behaviors,
+  so no new characterization commit is required. Separate worktrees own the
+  two production modules and their direct test changes; the lead owns the
+  cross-lane `index -> service` link, the poller menu importer, stale-reference
+  scan, ratchet reduction from 44 to 41, integration review, and full gates.
+- 2026-08-06 Asia/Tashkent: PR-7 index lane converts only the menu registry and
+  its dynamic-import test path. `service.mjs` remains in the neighbouring lane,
+  so index loads that existing path through a typed dynamic-import boundary
+  rather than adding a stale declaration or changing the service module. The
+  registry keeps the prior runtime function guards while gaining strict local
+  structural types; no menu behavior is intentionally changed.
+- 2026-08-06 Asia/Tashkent: Independent PR-7 semantic review found one small but
+  observable conversion drift in the service renderer. Replacing the original
+  `async render()` body with `Promise.resolve().then()` delayed `currentRun()`
+  until the next microtask. A regression test first demonstrated the changed
+  snapshot, then the implementation restored the original synchronous
+  pre-await read with one narrow `require-await` exception. The combined direct
+  menu suites now pass 30/30; no other behavior or import drift was found.
+- 2026-08-06 Asia/Tashkent: The final pre-pull PR-7 gate set is green. Node 24
+  reports 668 total tests, 664 passed, zero failed, and four expected macOS
+  skips. Coverage is 75.78% lines, 79.20% branches, and 73.03% functions, a
+  final PR-6 delta of +0.16 / +0.05 / +0.02 percentage points. Lint,
+  formatting, typecheck, build, exact 41/41 ratchet, absence of tracked menu
+  `.mjs`, Autograph 343/343, security-defense 45/45, pinned uv 0.8.3 lock
+  reproduction, and all Python 3.12.13 userbot guardrail, health, and compile
+  checks pass. Replica exits zero after its documented cross-restart
+  known-issue notice, proves reset retirement, and finishes `OK` with five
+  provider requests. The two approved untracked handoff files remain outside
+  Git, and the five PR-7 commits contain no AI attribution.
+- 2026-08-06 Asia/Tashkent: The required pull/rebase found `origin/main` still
+  at the PR-6 merge, so PR-7 commits were not rewritten. The complete gate set
+  was repeated on the committed post-pull tree: Node 24 again reports 668
+  total, 664 passed, zero failed, and four expected macOS skips; coverage again
+  measures 75.78% lines, 79.20% branches, and 73.03% functions. Lint,
+  formatting, typecheck, build, exact 41/41 ratchet, no tracked menu `.mjs`,
+  Autograph 343/343, and security-defense 45/45 pass. The userbot lock was
+  reproduced with the CI-pinned uv 0.8.3, then synced and tested under Python
+  3.12.13; guardrail, health, and py_compile checks pass. Replica repeated the
+  same documented cross-restart known-issue notice, proved reset retirement,
+  printed final `OK`, and exited zero.
+- 2026-08-06 Asia/Tashkent: PR-7 merged as #159 at `d083bcc` after green hosted
+  CI. CodeRabbit returned a successful status context but did not perform a
+  review because the Pro account was under an adaptive fair-use limit; the bot
+  reported a 23-minute wait. Two independent local semantic reviews and a
+  separate hosted-diff audit supplied the review evidence instead.
+- 2026-08-06 Asia/Tashkent: A hosted-history audit completed just after PR-7 was
+  merged and identified a process deviation: the two parallel menu conversion
+  commits and their following integration/fix commits formed a clean final
+  tree, but the intermediate conversion commits were not independently
+  runnable because cross-lane import rewrites landed later. Rewriting merged
+  `main` is not safe. From PR-8 onward, every conversion commit must include all
+  importer rewrites needed for its owned modules and pass its focused suite in
+  isolation before integration; cross-lane shared importers belong in one
+  explicitly runnable integration commit.
+- 2026-08-06 Asia/Tashkent: PR-8 starts from the PR-7 merge `d083bcc`. It owns
+  five shared `agent/lib` runtime modules, four colocated test conversions,
+  `schedule-paths.mts -> .ts`, five declaration removals, and all cross-boundary
+  import rewrites. The exact ratchet target is 32. `schedule-paths.mts` has no
+  direct behavioral test, so its cwd/data/status/lock/job contract is being
+  characterized in a separate commit before any conversion. Two later
+  worktrees will own non-overlapping language/settings/schedules and
+  run-status/Telegram boundaries; the lead owns shared poller/channel importers,
+  the ratchet, and final review.
+- 2026-08-06 Asia/Tashkent: The new schedule-paths characterization first
+  exposed only macOS `/var` versus `/private/var` fixture canonicalization; the
+  test now compares real paths and proves all four original-runtime behaviors.
+  The two conversion lanes then passed independently before integration:
+  language/settings/schedules passed 76 focused tests, while run-status and the
+  Telegram acceptance/continuation boundary passed 118. Raw Node consumers use
+  `.ts` specifiers; compiled agent consumers retain NodeNext `.js` specifiers.
+  In particular, raw `#lib/i18n.ts` must import `./settings.ts`: a `.js`
+  specifier fails under stock Node before the Eve build exists.
+- 2026-08-06 Asia/Tashkent: Integration resolved the two shared poller importers
+  as the exact union of both lanes and immediately passed raw imports of all
+  five shared modules, 219 focused tests plus two expected platform skips,
+  typecheck, and build. Both conversion commits remain independently runnable.
+  The finalization commit changes only stale path comments and the ratchet from
+  41 to the exact tracked count of 32. All five obsolete PR-8 declarations are
+  gone; the three remaining `.d.mts` files belong to later compatibility work.
+- 2026-08-06 Asia/Tashkent: Independent semantic review found one strict typing
+  blocker that runtime tests could not expose: the converted Telegram acceptance
+  wrapper had erased Eve's generic `RouteHandlerArgs<TState>` contract through
+  `never`. A separate atomic fix restores the generic handler and args, makes the
+  wrapped object typechecked, and removes the remaining unsafe test-fixture cast.
+  Direct acceptance coverage passes 11/11. Two follow-up read-only reviews found
+  no remaining behavior, import, scope, commit-integrity, or attribution blocker.
+- 2026-08-06 Asia/Tashkent: The final pre-pull PR-8 gate set is green. Node 24
+  reports 672 total tests, 668 passed, zero failed, and four expected macOS
+  skips. Coverage is 75.92% lines, 79.01% branches, and 73.22% functions, a
+  PR-7 delta of +0.14 / -0.19 / +0.19 percentage points. Lint, formatting,
+  typecheck, build, exact 32/32 ratchet, stale-reference scans, Autograph
+  343/343, security-defense 45/45, the CI-pinned uv 0.8.3 lock reproduction,
+  and all Python 3.12 userbot guardrail, health, and compile checks pass.
+  Replica exits zero after its documented cross-restart known-issue notice,
+  proves reset retirement, and finishes `OK` with five provider requests. The
+  two approved untracked handoff files remain outside Git.
+- 2026-08-06 Asia/Tashkent: The required fetch and pull/rebase found
+  `origin/main` still at the PR-7 merge `d083bcc`, so no PR-8 commit was
+  rewritten. The complete post-pull gate set is green on the committed tree:
+  Node 24 again reports 672 total, 668 passed, zero failed, and four expected
+  macOS skips; coverage is 75.92% lines, 79.05% branches, and 73.22% functions,
+  a PR-7 delta of +0.14 / -0.15 / +0.19 percentage points. Lint, formatting,
+  typecheck, build, exact 32/32 ratchet, stale-reference and diff checks,
+  replica, Autograph 343/343, security-defense 45/45, pinned uv 0.8.3 lock
+  reproduction, and all Python 3.12 userbot checks pass. An independent final
+  range audit found no behavior, scope, history, protected-file, or attribution
+  blocker.
+- 2026-08-06 Asia/Tashkent: PR-8 merged as #160 with merge commit `5985f22`
+  after green hosted CI and an approved CodeRabbit Pro review. CodeRabbit
+  reviewed the full range and produced no actionable comment; its only warning
+  was the repository-wide optional docstring-coverage check. Final scope is six
+  production conversions, four existing test-file conversions, one new
+  characterization file, five removed declarations, and `.mjs` budget 32.
+  Hosted coverage is 75.92% lines, 79.05% branches, and 73.22% functions.
+- 2026-08-06 Asia/Tashkent: PR-9 starts from the PR-8 merge `5985f22`. It owns
+  the two deferred canonical leaves `security-gate` and `telegram-format`; the
+  permanent `setup`, `init-vault`, and `check-update` compatibility shims with
+  their logic extracted to TypeScript; four internal entrypoint renames
+  (`check-bash-cwd`, `check-port`, `check-reasoning-strip`, `replica-smoke`);
+  and eighteen remaining non-bin test-file conversions. The bin-coupled
+  `security-migration.test.mjs` and `userbot-health-cli.test.mjs` stay for the
+  PR-10/11 CLI work. Together these changes reduce the exact tracked `.mjs`
+  count from 32 to 8.
+- 2026-08-06 Asia/Tashkent: PR-9 preparation found three runtime boundaries
+  that must remain explicit. Security and Telegram formatting feed both the Eve
+  bundle and raw Node 24 scripts, so every importer moves in the same conversion
+  commit and build plus raw-import smoke are mandatory. Setup and init-vault
+  keep their installer-visible `.mjs` paths and move behavior behind `.ts`
+  implementations; replica must prove the init-vault shim. Check-update likewise
+  keeps the systemd unit path and importable test contract while moving its
+  implementation to `.ts`. Three non-overlapping worktrees own security/format,
+  setup/init-vault, and internal entries/tests; the lead owns check-update,
+  ratchet integration, cross-lane review, and final gates. Missing direct
+  behavior is characterized against the original `.mjs` before conversion where
+  the original entrypoint can be imported safely; the setup exception is
+  documented below.
+- 2026-08-06 Asia/Tashkent: PR-9 integration completed the planned source set:
+  `security-gate` and `telegram-format` are canonical TypeScript; `setup`,
+  `init-vault`, and `check-update` retain their permanent `.mjs` entry paths
+  over TypeScript implementations; four internal utility entrypoints and all
+  eighteen remaining non-bin test files were renamed to `.ts`. Direct
+  characterization was added before the `init-vault` and `check-port`
+  conversions. The exact tracked `.mjs` count is now eight, matching the PR-9
+  ratchet target; the only two bin-coupled `.mjs` tests remain assigned to
+  PR-10 and PR-11.
+- 2026-08-06 Asia/Tashkent: PR-9 has one explicit TDD process deviation. The
+  original `setup.mjs` unconditionally starts the interactive wizard, opens
+  `/dev/tty`, and requires real provider/Telegram credentials and network calls
+  to complete, so a safe pre-conversion direct-import characterization was not
+  added. Existing dependency-level setup tests remained green; after extraction,
+  the pure OpenRouter helper gained direct tests, and an independent differential
+  harness matched 8,852 normal and malformed response shapes against the original
+  implementation. This avoids a brittle PTY/credential harness but means those
+  helper tests live in the setup conversion commit rather than a preceding
+  characterization commit.
+- 2026-08-06 Asia/Tashkent: Cross-lane review rejected several seemingly safer
+  conversion changes because they altered malformed-input or thrown-value
+  behavior. Setup provider/Telegram JSON access, check-update diagnostics,
+  check-port diagnostics, replica process shutdown and diagnostics, and the
+  reasoning-strip fixtures now preserve the original JavaScript operations and
+  coercion exactly through type-only boundaries. Independent differential
+  review matched 8,852 OpenRouter shapes and representative security/Telegram
+  formatting inputs. The overdue temporary `telegram-poll.d.mts` bridge was
+  removed after its two typed test consumers switched to explicit dynamic
+  module boundaries; no tracked `.d.mts` or `.mts` declaration remains.
+- 2026-08-06 Asia/Tashkent: The complete pre-pull PR-9 gate set is green on
+  Node 24.19.0. The full suite reports 689 total tests, 685 passed, zero failed,
+  and four expected macOS skips. Coverage is 76.94% lines, 79.52% branches, and
+  74.48% functions, a PR-8 delta of +1.02 / +0.47 / +1.26 percentage points.
+  Lint, formatting, typecheck, build, exact 8/8 `.mjs` ratchet, zero declaration
+  bridges, and diff checks pass. Replica exits zero after its documented
+  cross-restart resume notice, proves reset retirement, and finishes `OK` with
+  five provider requests.
+- 2026-08-06 Asia/Tashkent: CI-equivalent Python gates also pass: Autograph
+  343/343, security-defense 45/45, deterministic userbot lock reproduction with
+  uv 0.8.3, strict hashed environment sync, userbot guardrails, health, and
+  Python 3.12.13 byte-compilation. The two approved handoff files remain the
+  only untracked paths, no protected file is present in the PR range, and all
+  PR-9 commit messages are free of AI attribution.
+- 2026-08-06 Asia/Tashkent: The required fetch and pull/rebase found
+  `origin/main` still at the PR-8 merge `5985f22`, so no PR-9 commit was
+  rewritten. The complete post-pull gate set is green on the committed tree:
+  Node 24 again reports 689 total tests, 685 passed, zero failed, and four
+  expected macOS skips; the final repeated coverage run is 76.95% lines, 79.57%
+  branches, and 74.48% functions, a final PR-8 delta of +1.03 / +0.52 / +1.26
+  percentage points.
+  Lint, formatting, exact 8/8 ratchet, zero declarations, typecheck, build,
+  replica, Autograph 343/343, security-defense 45/45, uv 0.8.3 lock
+  reproduction, and all Python 3.12 userbot checks pass. Replica again emitted
+  only the documented cross-restart resume notice before proving reset
+  retirement and exiting zero with five provider requests.
+- 2026-08-06 Asia/Tashkent: Hosted CI passed PR-9 on the first push. The
+  CodeRabbit review found one lost comment header, one dishonest OpenRouter
+  callback return type, and PR-9-introduced duplication in update-check result
+  construction; those review fixes preserve runtime behavior. Its test-token
+  hardening suggestion is also accepted as a test-only no-op. The review also
+  surfaced four pre-existing behaviors that are deliberately not changed in
+  this zero-semantics batch: init-vault treats `git init`/`git add` failures as
+  fatal while only an initial commit failure is non-fatal; setup accepts
+  non-numeric manual Telegram allowlist entries; setup serializes embedded
+  newlines in inherited environment values; and an empty Ollama catalog reaches
+  `pickFromList([])` before final validation rejects the missing model. The
+  suggested catch-and-continue init-vault patch would falsely report an
+  initialized backup repository, while the three interactive setup fixes need a
+  safe dependency-injected test seam rather than an unsafe credential/network
+  PTY harness. The reasoning-strip modernization suggestion is also declined:
+  its flat usage, string finish reason, and async factories intentionally match
+  the original JavaScript runtime fixture; replacing them with current SDK V4
+  shapes would change characterization semantics. These deferred defects remain
+  candidates for separate test-first bugfix work after the migration.
+- 2026-08-06 Asia/Tashkent: PR-10 starts from the PR-9 merge `ab0ae84`. Its
+  boundary is the first half of the executable CLI: shared runtime/environment
+  primitives, systemd unit management, update, config, and doctor move from
+  `bin/iva.mjs` into `scripts/cli/*.ts`; the executable remains a mixed
+  dispatcher until PR-11. `security-migration.test.mjs` becomes TypeScript and
+  the exact tracked `.mjs` ratchet moves from eight to seven. The install root
+  must always be derived by the copied `bin/iva.mjs` shim and injected into CLI
+  modules; deriving it from a realpathed `scripts/cli/*.ts` URL could make
+  sandbox fixtures read or mutate the source checkout. All black-box CLI
+  fixtures therefore physically copy `scripts/cli/` rather than symlinking the
+  whole scripts tree. Pre-conversion root/update/config characterization and a
+  tested runtime factory are prepared in parallel worktrees; the final history
+  will place characterization before extraction. The shared runtime/systemd API
+  is integrated and reviewed before update, config, and doctor are assigned to
+  parallel ownership lanes.
+- 2026-08-06 Asia/Tashkent: PR-10 integration moves the shared runtime, systemd
+  lifecycle, update, config, and doctor logic into `scripts/cli/*.ts` while the
+  remaining service/account/userbot/router commands stay in the mixed
+  `bin/iva.mjs` dispatcher for PR-11. Config, doctor, and update were implemented
+  in three isolated worktrees, wired into the executable by the lead, then
+  autosquashed into separate atomic conversion commits. Each rewritten
+  conversion commit was checked in a detached temporary worktree with its
+  focused tests, typecheck, and lint; after the final review regression tests,
+  the combined production dispatcher passes 715 tests (711 passed, zero failed,
+  four expected macOS skips).
+- 2026-08-06 Asia/Tashkent: Independent semantic review found one narrow
+  conversion drift before push: two type-boundary `String()` calls made a
+  truthy `Symbol`-valued `error.message` safe even though the original template
+  interpolation throws. The runtime coercions were removed in favor of erased
+  type assertions, and direct tests now preserve both the post-commit and outer
+  catch behaviors for `Symbol` messages. The final focused update/entrypoint
+  suite passes 23/23; independent config/doctor and PR-scope audits are clean.
+- 2026-08-06 Asia/Tashkent: The first full coverage run under concurrent audit
+  load hit the unchanged `userbot-health-cli.test.mjs` 1.5-second probe deadline
+  once (708/713). Its immediate isolated coverage rerun passed in 619 ms, and a
+  clean repeated full coverage suite passed all 715 tests. The final repeated
+  measurement is 76.14% lines, 79.04% branches, and 73.28% functions, a change
+  from merged PR-9 of -0.81 / -0.53 / -1.20 percentage points while retaining
+  the monotonic configured thresholds of 72 / 79 / 71. The exact tracked `.mjs`
+  count and ratchet are both seven; no `.d.mts` or `.mts` remains.
+- 2026-08-06 Asia/Tashkent: The complete pre-pull PR-10 gate set is green on
+  Node 24.19.0: lint, formatting, typecheck, 715-test full suite, coverage,
+  exact 7/7 `.mjs` ratchet, zero declarations, diff checks, Eve build, and
+  replica. Replica emitted only the documented cross-restart resume notice,
+  proved reset retirement, and exited `OK` with five provider requests.
+  Autograph and security-defense tests pass; the userbot lock reproduces with
+  CI-pinned uv 0.8.3. The host's default Python is 3.13, so the disposable
+  userbot environment was explicitly recreated under Python 3.12.13 before the
+  strict hashed sync, guardrail, health, and byte-compilation gates; all pass.
+- 2026-08-06 Asia/Tashkent: The required fetch and pull/rebase found
+  `origin/main` still at the PR-9 merge `ab0ae84`, so no PR-10 commit was
+  rewritten. The complete post-pull gate set is green on the committed tree:
+  Node again reports 715 total tests, 711 passed, zero failed, and four expected
+  skips; coverage is 76.14% lines, 79.04% branches, and 73.28% functions.
+  Lint, formatting, exact 7/7 ratchet, zero declarations, typecheck, diff
+  checks, build, replica, Autograph 343/343, security-defense 45/45, uv 0.8.3
+  lock reproduction, and all Python 3.12 userbot checks pass. The two protected
+  handoff files remain the only untracked paths and are absent from the PR
+  range; commit messages and bodies contain no AI attribution.
+- 2026-08-06 Asia/Tashkent: PR-10 CodeRabbit review identified two safe
+  boundary cleanups: the runtime side-effect import test now reuses the module
+  URL directly instead of round-tripping an already encoded pathname, and the
+  update transaction result type now requires the stdout/stderr strings that
+  its production adapter always returns. The direct stdout split intentionally
+  preserves the original JavaScript failure semantics rather than introducing
+  an empty-string fallback. The suggested omission of the thirtieth failed
+  health-check sleep is declined because the pre-conversion loop sleeps after
+  every unsuccessful probe, including the last; changing that deadline belongs
+  in a separate behavioral change, not this zero-semantics extraction. The
+  committed review-fix tree passes all 715 Node tests (711 passed, zero failed,
+  four expected macOS skips) and measures 76.14% lines, 79.04% branches, and
+  73.28% functions, a final change from PR-9 of -0.81 / -0.53 / -1.20
+  percentage points. Build, replica, Autograph 343/343, security-defense 45/45,
+  the uv 0.8.3 lock reproduction, and the strict Python 3.12 userbot gates are
+  green. Independent semantic review confirms that the runtime output is
+  unchanged; only the adapter's erased TypeScript contract is narrower.
+- 2026-08-06 Asia/Tashkent: PR-11 starts from the PR-10 merge `e164e9d` and
+  finishes the executable CLI extraction. Services, account commands, and
+  userbot commands are developed concurrently in three isolated worktrees with
+  exclusive new-file ownership; the integration branch alone owns `main.ts`,
+  `bin/iva.mjs`, update wiring, the `.mjs` test rename, the ratchet, and this
+  log. Every lane first commits black-box characterization against the unchanged
+  mixed JavaScript dispatcher, and all characterization commits are integrated
+  and run together before any production extraction enters the canonical
+  branch. This keeps the critical path parallel without allowing workers to
+  race on shared routing or migration-policy files.
+- 2026-08-06 Asia/Tashkent: Root integration caught two test-boundary issues
+  before publication. The account conversion briefly normalized a truthy
+  `Symbol` version even though legacy template interpolation throws; the
+  coercion was removed and a direct regression test now preserves that edge.
+  The userbot characterization fixture also contained a local Node path, which
+  was replaced with `process.execPath`. Under the full suite, its status probe
+  then exposed a real timing nondeterminism: the production 1.5-second deadline
+  can return `unreachable` before an inactive fake systemd result arrives. The
+  fixture now seeds an active service with no token, so both the ordinary path
+  and deadline path deterministically produce the exact three-line
+  `unreachable` response without weakening the assertion.
+- 2026-08-06 Asia/Tashkent: Three independent read-only audits of the assembled
+  PR-11 tree are clean across CLI semantics, deletion/security boundaries,
+  update rollback wiring, copied-root fixtures, shim behavior, TDD ordering,
+  migration scope, and machine-specific paths. The executable `bin/iva.mjs`
+  is an eight-line root-aware shim with mode 0755. The tracked `.mjs` count and
+  ratchet are exactly six; `.mts` and `.d.mts` are empty. All four
+  characterization commits precede their production extractions, and the
+  temporary fixup commits will be autosquashed before publication.
+- 2026-08-06 Asia/Tashkent: The complete pre-rebase PR-11 verification set is
+  green on Node 24.19.0. The full suite reports 785 tests: 781 passed, zero
+  failed, and four expected macOS skips. Coverage is 77.10% lines, 79.17%
+  branches, and 72.51% functions, a PR-10 delta of +0.96 / +0.13 / -0.77
+  percentage points. Lint, formatting, typecheck, exact 6/6 ratchet, zero
+  declarations, diff and protected-file checks, Eve build, and replica pass;
+  replica emits only its documented resume notice and exits `OK` with five
+  provider requests. Autograph passes 343/343 and security-defense 45/45. The
+  userbot lock reproduces byte-for-byte with CI-pinned uv 0.8.3, and a freshly
+  recreated Python 3.12 environment passes strict hashed sync, guardrails,
+  health tests, and byte compilation.
+- 2026-08-06 Asia/Tashkent: `git pull --rebase origin main` confirmed that the
+  branch is current on the PR-10 merge. After autosquashing both userbot test
+  fixups, the final atomic history passes the complete gate set again: 781/785
+  Node tests with zero failures, coverage 77.10 / 79.20 / 72.51, lint,
+  formatting, exact 6/6 ratchet, zero declarations, typecheck, diff checks,
+  build, replica, Autograph 343/343, security-defense 45/45, the uv 0.8.3 lock
+  reproduction, and strict Python 3.12 userbot checks. The final PR-10 coverage
+  delta is +0.96 / +0.16 / -0.77 percentage points. Commit messages and bodies
+  contain no AI attribution; the two protected handoff files remain untracked
+  and absent from the branch diff.
+- 2026-08-06 Asia/Tashkent: PR-12 starts from the PR-11 merge `861c320`. The
+  final work is split into an isolated ESLint-config conversion lane and two
+  independent read-only audits for live `.mjs` references and all six acceptance
+  criteria; the integration branch owns policy/docs cleanup, final evidence, and
+  GitHub delivery. References to the five permanent external entry shims remain
+  an explicit allowlist, while stale source/test conventions and paths must be
+  removed. The owner-only live `iva doctor` and `iva update` checks remain
+  deliberately outside Codex execution.
+- 2026-08-06 Asia/Tashkent: Final coverage enforcement moves from the PR-0
+  floors 72 / 79 / 71 to 76 / 79.1 / 72. Node 24 accepts the decimal branch
+  threshold. All three dimensions therefore tighten while retaining headroom
+  below the measured PR-11 range of 77.10 / 79.17-79.20 / 72.51; this proves
+  growth against every PR-0 baseline metric without setting a timing-sensitive
+  floor at the exact observed value.
+- 2026-08-06 Asia/Tashkent: PR-12 leaves exactly the five permanent entry shims
+  (`bin/iva.mjs` plus `scripts/{telegram-poll,check-update,setup,init-vault}.mjs`),
+  at 8 / 4 / 5 / 3 / 2 lines respectively and with no control-flow, logging, or
+  exit logic. The final ESLint config now runs as native stripped TypeScript via
+  ESLint's `unstable_native_nodejs_ts_config` flag, so no runtime dependency was
+  added. Temporary child-process fixtures were also renamed to `.ts`; the final
+  live-reference audit contains only the five stable shim paths, Eve build
+  artifacts, and migration-policy enforcement. Tracked `.d.mts` and `.mts`
+  counts are both zero, and the ratchet is exactly 5 / 5.
+- 2026-08-06 Asia/Tashkent: PR-12 pre-rebase verification is green on Node
+  24.19.0 and npm 11.17.0: lint, Prettier, typecheck, Eve build, and replica
+  smoke (`OK`, five mock-provider requests) pass; the complete suite reports
+  784 passed, zero failed, and four expected macOS skips out of 788. Coverage is
+  77.20 / 79.28 / 72.80 against the new 76 / 79.1 / 72 floors. One earlier
+  coverage attempt hit the pre-existing `bash-tool` timing boundary before a
+  background child wrote its PID; the exact test passed in isolation and the
+  subsequent complete coverage run passed. Autograph is 343/343, security
+  defense is 45/45, uv 0.8.3 reproduces the Python 3.12 x86_64 Linux lock
+  byte-for-byte, and the strict hashed userbot sync, guardrails, health, and
+  `py_compile` checks pass. Acceptance criteria 1-5 are therefore locally
+  evidenced; criterion 6 remains explicitly owner-only (`iva doctor` / `iva
+update` before and after merge) and was not run by Codex.
+- 2026-08-06 Asia/Tashkent: `origin/main` remained at the PR-11 merge
+  `861c320`, so the required pull/rebase was a no-op. The complete post-sync
+  gate set then passed after a clean `npm ci`: 784 passed, zero failed, four
+  expected macOS skips; coverage 77.21 / 79.29 / 72.80; lint, Prettier, mjs
+  ratchet 5/5, typecheck, build, replica (`OK`, five provider requests),
+  Autograph 343/343, security defense 45/45, byte-identical uv 0.8.3 lock,
+  strict hashed userbot sync, guardrails, health, and `py_compile`. Range diff
+  checks confirm both protected handoff files are absent and all PR-12 commits
+  contain no AI attribution.
+- 2026-08-06 Asia/Tashkent: CodeRabbit's completed PR-12 review found one valid
+  portability issue in the new ESLint characterization test: URL `.pathname`
+  is not a native filesystem path on Windows. The expected config root now uses
+  `dirname(fileURLToPath(configUrl))`, matching `import.meta.dirname` on every
+  supported platform without changing production behavior.

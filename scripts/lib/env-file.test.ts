@@ -1,0 +1,133 @@
+// Self-check for env-file — run: node scripts/lib/env-file.test.ts
+import { strict as assert } from "node:assert";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  writeFile,
+  stat,
+  rm,
+  readdir,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  parseEnvText,
+  readEnvFresh,
+  readEnvValues,
+  upsertEnv,
+  writeEnvAtomicSync,
+} from "./env-file.ts";
+
+const dir = await mkdtemp(join(tmpdir(), "env-file-test-"));
+const p = join(dir, ".env");
+
+// parse: values, quote stripping, comments ignored.
+assert.deepEqual(
+  parseEnvText("A=1\n# comment\nB=\"two\"\nC='three'\nnot a line"),
+  { A: "1", B: "two", C: "three" },
+);
+assert.deepEqual(
+  await readEnvValues(join(dir, "missing")),
+  {},
+  "missing file → {}",
+);
+
+// create from scratch → 0600 + trailing newline.
+await upsertEnv(p, { MODEL_PROVIDER: "codex", CODEX_MODEL: "gpt-5.5" });
+assert.equal(
+  await readFile(p, "utf8"),
+  "MODEL_PROVIDER=codex\nCODEX_MODEL=gpt-5.5\n",
+);
+assert.equal((await stat(p)).mode & 0o777, 0o600, "new file is 0600");
+
+// in-place replace preserves comments, order and unknown keys, while hardening mode.
+await writeFile(
+  p,
+  "# top comment\nA=1\n\nMODEL_PROVIDER=ollama\nB=2 # keep me\n",
+);
+await chmod(p, 0o640);
+await upsertEnv(p, { MODEL_PROVIDER: "openrouter", THINKING_EFFORT: "high" });
+assert.equal(
+  await readFile(p, "utf8"),
+  "# top comment\nA=1\n\nMODEL_PROVIDER=openrouter\nB=2 # keep me\nTHINKING_EFFORT=high\n",
+);
+assert.equal((await stat(p)).mode & 0o777, 0o600, "existing env is hardened");
+
+// null deletes the line (all duplicates), value trims, idempotent double-upsert.
+await writeFile(p, "A=1\nTHINKING_EFFORT=low\nB=2\nTHINKING_EFFORT=high\n");
+await upsertEnv(p, { THINKING_EFFORT: null, A: "  x  " });
+await upsertEnv(p, { THINKING_EFFORT: null, A: "x" });
+assert.equal(await readFile(p, "utf8"), "A=x\nB=2\n");
+
+// multiline value must throw, not corrupt the file.
+await assert.rejects(() => upsertEnv(p, { KEY: "line1\nline2" }), /newline/);
+assert.equal(
+  await readFile(p, "utf8"),
+  "A=x\nB=2\n",
+  "file untouched after reject",
+);
+
+// A failure after the replacement is durable but before rename keeps the original bytes.
+await writeFile(p, "ORIGINAL=still-here\n");
+assert.throws(
+  () =>
+    writeEnvAtomicSync(p, "REPLACEMENT=must-not-land\n", {
+      beforeRename() {
+        throw new Error("injected rename failure");
+      },
+    }),
+  /injected rename failure/,
+);
+assert.equal(await readFile(p, "utf8"), "ORIGINAL=still-here\n");
+assert.deepEqual(
+  (await readdir(dir)).filter((name) => name.includes(".tmp-")),
+  [],
+);
+
+// A directory-fsync failure happens after rename: report that state honestly and
+// keep the complete replacement visible rather than pretending the old bytes remain.
+await writeFile(p, "ORIGINAL=will-be-replaced\n");
+assert.throws(
+  () =>
+    writeEnvAtomicSync(p, "REPLACEMENT=is-live\n", {
+      beforeDirectorySync() {
+        throw new Error("injected directory sync failure");
+      },
+    }),
+  (error: unknown) =>
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "EENV_DURABILITY" &&
+    /file was replaced/.test(error.message) &&
+    /durability is unconfirmed/.test(error.message),
+);
+assert.equal(await readFile(p, "utf8"), "REPLACEMENT=is-live\n");
+assert.deepEqual(
+  (await readdir(dir)).filter((name) => name.includes(".tmp-")),
+  [],
+);
+
+// fresh read: file values win over the (stale) base snapshot; base-only keys survive.
+await writeFile(p, "MODEL_PROVIDER=codex\nCODEX_MODEL=gpt-5.6\n");
+assert.deepEqual(
+  await readEnvFresh(p, {
+    MODEL_PROVIDER: "opencode",
+    OPENCODE_MODEL: "kimi-k3",
+    PATH: "/usr/bin",
+  }),
+  {
+    MODEL_PROVIDER: "codex",
+    CODEX_MODEL: "gpt-5.6",
+    OPENCODE_MODEL: "kimi-k3",
+    PATH: "/usr/bin",
+  },
+);
+assert.deepEqual(
+  await readEnvFresh(join(dir, "missing"), { A: "1" }),
+  { A: "1" },
+  "missing file → base as-is",
+);
+
+await rm(dir, { recursive: true, force: true });
+console.log("env-file: all assertions passed");
