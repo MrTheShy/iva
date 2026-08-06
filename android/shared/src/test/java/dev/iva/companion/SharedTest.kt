@@ -125,3 +125,13 @@ class SpeechChunkTest {
         assertEquals("a".repeat(50), chunks.joinToString(""))
     }
 }
+
+class VoiceEndpointTest {
+
+    @Test
+    fun `the voice lives beside the turn, on the same host`() {
+        val config = Config("https://iva.example.com/", "t")
+        assertEquals("https://iva.example.com/eve/v1/app", config.endpoint)
+        assertEquals("https://iva.example.com/eve/v1/app/voice", config.voiceEndpoint)
+    }
+}

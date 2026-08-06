@@ -116,7 +116,10 @@ class TurnController(
             when (val answer = IvaClient.ask(config(), text)) {
                 is Answer.Spoken -> {
                     _state.value = TurnState.Answered(text, answer.reply)
-                    speaker.speak(answer.reply)
+                    // Her voice when the server can make it, the phone's when it
+                    // cannot. Either way the answer is heard.
+                    val voice = IvaClient.speak(config(), answer.reply)
+                    if (voice == null || !speaker.play(voice)) speaker.speak(answer.reply)
                 }
                 is Answer.Problem -> {
                     _state.value = TurnState.Failed(answer.message, answer.detail)

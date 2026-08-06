@@ -42,6 +42,29 @@ The turn goes into the **same session as your Telegram chat**, so a conversation
 on the watch continues in Telegram and back. The reply is posted to the chat by the
 Telegram channel itself; only your dictated text is echoed there, marked 🎙.
 
+## Her own voice
+
+The apps recognise speech on the device, but they do not have to answer with the voice
+the phone shipped with. A resident [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)
+process on the server synthesises the reply in Italian, and the apps play it:
+
+```
+POST /eve/v1/app/voice
+Authorization: Bearer <IVA_APP_BEARER>
+
+{ "text": "Fatto, promemoria per domani alle 9." }
+→ audio/wav
+```
+
+A separate request from the turn on purpose: the answer reaches the app as soon as it
+exists, and the audio follows a second or two later. When the synthesiser is down,
+unreachable, or slow, the route says so plainly and the app reads the same words with
+the voice built into the device — a companion that goes silent because a model is down
+is worse than one that sounds generic.
+
+Setting it up: [scripts/voice/README.md](../scripts/voice/README.md). It is optional;
+without it the apps simply use the phone's voice.
+
 ## Turning it on
 
 1. Add a secret to `.env`:

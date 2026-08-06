@@ -13,9 +13,13 @@ data class Config(val baseUrl: String, val token: String) {
     val isComplete: Boolean
         get() = baseUrl.isNotBlank() && token.isNotBlank()
 
-    /** Full URL of the voice route, tolerating a trailing slash in the typed host. */
+    /** Full URL of the turn route, tolerating a trailing slash in the typed host. */
     val endpoint: String
         get() = baseUrl.trimEnd('/') + "/eve/v1/app"
+
+    /** Where the reply is turned into Iva's own voice. */
+    val voiceEndpoint: String
+        get() = endpoint + "/voice"
 }
 
 object Settings {

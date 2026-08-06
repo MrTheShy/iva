@@ -33,6 +33,12 @@ object IvaClient {
     private const val READ_TIMEOUT_MS = 130_000
     private const val CONNECT_TIMEOUT_MS = 15_000
 
+    /**
+     * Synthesis takes seconds, not minutes. Waiting longer than this for a nicer voice
+     * is worse than reading the same words with the phone's own.
+     */
+    private const val VOICE_TIMEOUT_MS = 35_000
+
     suspend fun ask(config: Config, text: String): Answer = withContext(Dispatchers.IO) {
         if (!config.isComplete) {
             return@withContext Answer.Problem(
@@ -69,6 +75,35 @@ object IvaClient {
                 "Non riesco a raggiungere Iva.",
                 "rete: ${e.javaClass.simpleName}: ${e.message} · ${config.endpoint}",
             )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
+     * Fetches the reply spoken in Iva's own voice, or null when the server cannot
+     * produce it. Null is not an error to report: the caller reads the text with the
+     * voice built into the device instead, and the user hears an answer either way.
+     */
+    suspend fun speak(config: Config, text: String): ByteArray? = withContext(Dispatchers.IO) {
+        if (!config.isComplete) return@withContext null
+        val connection = try {
+            URL(config.voiceEndpoint).openConnection() as HttpURLConnection
+        } catch (e: IOException) {
+            return@withContext null
+        }
+        try {
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.connectTimeout = CONNECT_TIMEOUT_MS
+            connection.readTimeout = VOICE_TIMEOUT_MS
+            connection.setRequestProperty("Authorization", "Bearer ${config.token}")
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.outputStream.use { it.write(JSONObject().put("text", text).toString().toByteArray()) }
+            if (connection.responseCode !in 200..299) return@withContext null
+            connection.inputStream.use { it.readBytes() }.takeIf { it.isNotEmpty() }
+        } catch (e: IOException) {
+            null
         } finally {
             connection.disconnect()
         }

@@ -5,8 +5,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
+import java.io.File
 import androidx.core.content.ContextCompat
 import android.speech.RecognitionListener
 import android.speech.RecognitionService
@@ -234,9 +237,14 @@ class Dictation(private val context: Context) {
     }
 }
 
-/** Reads Iva's answers out loud. */
-class Speaker(context: Context, private val onDone: () -> Unit = {}) {
+/**
+ * Reads Iva's answers out loud — with her own voice when the server sends one, and
+ * with the phone's otherwise. The fallback is the point: a companion that goes silent
+ * because a model is down is worse than one that sounds generic.
+ */
+class Speaker(private val context: Context, private val onDone: () -> Unit = {}) {
 
+    private var player: MediaPlayer? = null
     private var ready = false
     private val engine = TextToSpeech(context) { status ->
         ready = status == TextToSpeech.SUCCESS
@@ -275,12 +283,39 @@ class Speaker(context: Context, private val onDone: () -> Unit = {}) {
         if (chunks.isEmpty()) onDone()
     }
 
+    /**
+     * Plays audio the server synthesised. Returns false when the phone cannot play it,
+     * so the caller can read the same words with [speak] instead of leaving silence.
+     */
+    fun play(wav: ByteArray): Boolean {
+        stop()
+        return try {
+            val file = File(context.cacheDir, "reply.wav")
+            file.writeBytes(wav)
+            player = MediaPlayer().apply {
+                setDataSource(file.path)
+                setOnCompletionListener { onDone() }
+                setOnErrorListener { _, _, _ -> onDone(); true }
+                prepare()
+                start()
+            }
+            true
+        } catch (failure: Exception) {
+            Log.w("IvaSpeaker", "audio del server non riproducibile", failure)
+            player = null
+            false
+        }
+    }
+
     fun stop() {
         engine.stop()
+        player?.runCatching { stop() }
+        player?.release()
+        player = null
     }
 
     fun shutdown() {
-        engine.stop()
+        stop()
         engine.shutdown()
     }
 
