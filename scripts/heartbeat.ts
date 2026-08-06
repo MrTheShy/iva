@@ -82,6 +82,17 @@ const response = await client
         ? `L'ultima cosa che gli hai detto di tua iniziativa: «${state.lastMessage}»`
         : "Non gli hai mai scritto di tua iniziativa.",
       "Rispondi con PASS oppure con il solo testo del messaggio.",
+      // Silence is the right answer most of the time, but a bare PASS is
+      // untunable: you cannot tell good judgment from a tick that looked at
+      // nothing. In a dry run only, ask for the reasoning — real ticks stay
+      // strict so the exact-match check below keeps working.
+      ...(DRY
+        ? [
+            "SEI IN PROVA: dopo PASS vai a capo e scrivi 2-3 righe su cosa hai",
+            "guardato (CORE, task aperte, log di oggi) e perché non vale la pena",
+            "parlare. Se invece scrivi il messaggio, non aggiungere spiegazioni.",
+          ]
+        : []),
     ].join("\n"),
   );
 const result = await response.result();
@@ -102,10 +113,15 @@ if (result.status === "failed" || !result.message) {
 
 const text = result.message.trim();
 
-// Exact match only. A model that wraps PASS in a sentence has decided to talk,
-// and the visible failure (one message too many) beats the invisible one.
-if (text === "PASS") {
+// Exact match on a real tick. A model that wraps PASS in a sentence has decided
+// to talk, and the visible failure (one message too many) beats the invisible
+// one. A dry run also accepts a leading PASS, because it asked for the reasoning
+// that follows — that relaxation must never apply when a send is possible.
+const passed = DRY ? /^PASS\b/.test(text) : text === "PASS";
+if (passed) {
+  const why = DRY ? text.replace(/^PASS\b[:.\s-]*/, "").trim() : "";
   console.log("heartbeat: PASS — niente da dire");
+  if (why) console.log(`\nperché:\n${why}`);
   await persist({ ticksSinceSpoke: (state.ticksSinceSpoke ?? 0) + 1 });
   process.exit(0);
 }
