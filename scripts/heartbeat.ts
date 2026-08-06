@@ -71,17 +71,19 @@ const client = new Client({
 // The last message is quoted back so she can tell repetition from novelty —
 // the skill's hardest rule ("don't say it twice") needs the evidence, and a
 // fresh session has no memory of what the previous tick sent.
-const response = await client.session().send(
-  [
-    "Battito. Nessuno ti ha scritto: ti sei svegliata da sola.",
-    "Carica lo skill `heartbeat` e seguilo.",
-    `Hai parlato di tua iniziativa l'ultima volta: ${hoursSince(state.lastSpokeAt)}.`,
-    state.lastMessage
-      ? `L'ultima cosa che gli hai detto di tua iniziativa: «${state.lastMessage}»`
-      : "Non gli hai mai scritto di tua iniziativa.",
-    "Rispondi con PASS oppure con il solo testo del messaggio.",
-  ].join("\n"),
-);
+const response = await client
+  .session()
+  .send(
+    [
+      "Battito. Nessuno ti ha scritto: ti sei svegliata da sola.",
+      "Carica lo skill `heartbeat` e seguilo.",
+      `Hai parlato di tua iniziativa l'ultima volta: ${hoursSince(state.lastSpokeAt)}.`,
+      state.lastMessage
+        ? `L'ultima cosa che gli hai detto di tua iniziativa: «${state.lastMessage}»`
+        : "Non gli hai mai scritto di tua iniziativa.",
+      "Rispondi con PASS oppure con il solo testo del messaggio.",
+    ].join("\n"),
+  );
 const result = await response.result();
 
 async function persist(patch: HeartbeatState): Promise<void> {

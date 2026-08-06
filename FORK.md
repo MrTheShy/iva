@@ -15,7 +15,7 @@ I have found. Three decisions in particular are kept intact here:
 
 1. **Memory is not written during conversation.** The nightly rollup writes it,
    plus the live agent on an explicit "remember …".
-   *"Never let routine chat edit it."* This is what stops a single turn's
+   _"Never let routine chat edit it."_ This is what stops a single turn's
    mistake from becoming a fact on the next turn.
 2. **`CORE.md` is RAM with a hard character cap** (~1200), and when the model
    fails to consolidate enough, `doctor.ts` clamps it deterministically. The

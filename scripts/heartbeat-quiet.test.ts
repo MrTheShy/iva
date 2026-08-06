@@ -39,7 +39,11 @@ test("an empty window silences nothing", () => {
 });
 
 test("a tick is due only after the configured interval", () => {
-  const at = (mins: number) => ({ now: mins * 60_000, hour: 12, lastTickAt: 0 });
+  const at = (mins: number) => ({
+    now: mins * 60_000,
+    hour: 12,
+    lastTickAt: 0,
+  });
   assert.equal(shouldTick({ intervalMinutes: 15 }, at(14)), false);
   assert.equal(shouldTick({ intervalMinutes: 15 }, at(15)), true);
   assert.equal(shouldTick({}, at(14)), false, "the default is 15 minutes");
@@ -48,7 +52,11 @@ test("a tick is due only after the configured interval", () => {
 test("an interval below the cron floor is clamped, not honoured", () => {
   // The cron cannot fire faster than every 5 minutes, so a 1-minute setting
   // must not turn every cron slot into a tick.
-  const at = (mins: number) => ({ now: mins * 60_000, hour: 12, lastTickAt: 0 });
+  const at = (mins: number) => ({
+    now: mins * 60_000,
+    hour: 12,
+    lastTickAt: 0,
+  });
   assert.equal(shouldTick({ intervalMinutes: 1 }, at(4)), false);
   assert.equal(shouldTick({ intervalMinutes: 1 }, at(5)), true);
 });

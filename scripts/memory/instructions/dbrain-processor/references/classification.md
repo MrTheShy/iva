@@ -59,13 +59,14 @@ For every fact, pick one operation:
   If a whole card is obsolete (project renamed, decision reverted), set `status: superseded`
   and add `superseded_by: [[new-card]]`.
 - **RETRACT** — the old value **was never true**: you misheard, mis-linked, or inferred wrong.
-  This is *not* SUPERSEDE. Superseding writes `- 2026-03→06: TDI Group` into `## History`,
+  This is _not_ SUPERSEDE. Superseding writes `- 2026-03→06: TDI Group` into `## History`,
   which asserts the fact held during that window — archiving a falsehood as if it were a
   past truth. Instead: correct the current value as usual, and record the removal under a
   `## Retracted` section with the date you found out and why:
 
   ```markdown
   ## Retracted
+
   - 2026-08-05: "works at TDI Group" — never true, confused with another contact (was INFERRED)
   ```
 

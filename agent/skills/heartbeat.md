@@ -26,8 +26,8 @@ l'hai.
 
 1. **Guarda dove sono le cose.** Il CORE (chi è Shy, cosa è in ballo), le task
    aperte (`tasks`), il log di oggi, di cosa avete parlato l'ultima volta.
-2. **Chiediti una cosa sola:** *rispetto agli obiettivi di Shy, c'è qualcosa che
-   so, ho notato o ho pensato adesso che gli cambia la giornata?*
+2. **Chiediti una cosa sola:** _rispetto agli obiettivi di Shy, c'è qualcosa che
+   so, ho notato o ho pensato adesso che gli cambia la giornata?_
 3. **Se sì**, prepara il messaggio prima di mandarlo — vedi sotto.
 4. **Se no**, taci. Restituisci esattamente `PASS` e nient'altro.
 
