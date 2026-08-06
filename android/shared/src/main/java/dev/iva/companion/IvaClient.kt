@@ -77,6 +77,11 @@ object IvaClient {
         502 -> Answer.Problem("Iva si è inceppata.")
         503 -> Answer.Problem("Il server non è configurato.")
         504 -> Answer.Problem("Ci sta mettendo troppo: guarda su Telegram.")
+        // Cloudflare taglia l'origine a 100s e risponde 524, prima che la rotta possa
+        // arrivare al suo tetto di 120s. Per chi ascolta è lo stesso caso del 504: la
+        // risposta arriva comunque in chat, perché il turno sul server continua.
+        524 -> Answer.Problem("Ci sta mettendo troppo: guarda su Telegram.")
+        in 520..529 -> Answer.Problem("Iva non risponde.")
         else -> Answer.Problem("Errore $status.")
     }
 }

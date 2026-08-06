@@ -49,6 +49,16 @@ class ReadAnswerTest {
     }
 
     @Test
+    fun `a proxy that gives up is not read out as a number`() {
+        // Cloudflare sits in front of the server, so its own 5xx reach the app.
+        assertTrue((IvaClient.readAnswer(524, "") as Answer.Problem).message.contains("Telegram"))
+        for (status in listOf(520, 521, 522, 523, 525, 526)) {
+            val answer = IvaClient.readAnswer(status, "") as Answer.Problem
+            assertTrue("status: $status", answer.message == "Iva non risponde.")
+        }
+    }
+
+    @Test
     fun `every refusal the server can send says something out loud`() {
         for (status in listOf(400, 401, 409, 429, 502, 503, 504, 418)) {
             val answer = IvaClient.readAnswer(status, "")
