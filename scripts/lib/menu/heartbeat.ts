@@ -6,6 +6,7 @@
 import { readSettings, writeSettings } from "#lib/settings.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 
 type Button = { text: string; callback_data: string };
 type MenuState = { page: number };
@@ -14,7 +15,56 @@ type MenuContext = {
   btn: (text: string, callbackData: string) => Button;
   backRow: (screen: string) => Button[];
   show: (state: MenuState, screen: string) => Promise<void>;
+  flows: {
+    screen: (
+      state: MenuState,
+      text: string,
+      rows?: Button[][],
+    ) => Promise<void>;
+  };
 };
+
+// One tick at a time: a double tap must not start a second think on top of the
+// first. Module scope is enough — the menu lives in a single bridge process.
+let running = false;
+const TRY_TIMEOUT_MS = 4 * 60_000;
+const OUTPUT_MAX = 3000;
+
+/**
+ * Spawn one tick and report when it exits. Deliberately NOT awaited by on():
+ * the menu engine awaits the handler, so blocking here would freeze the bridge
+ * for as long as the model thinks. The message is edited on exit instead.
+ */
+function runTick(
+  dry: boolean,
+  done: (output: string, ok: boolean) => void,
+): void {
+  running = true;
+  const child = spawn(
+    process.execPath,
+    ["--env-file=.env", "scripts/heartbeat.ts", ...(dry ? ["--dry"] : [])],
+    { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let out = "";
+  const grab = (chunk: Buffer) => {
+    // Bound the buffer, not just the message: a runaway child must not grow the
+    // bridge's memory while it runs.
+    if (out.length < OUTPUT_MAX * 2) out += chunk.toString("utf8");
+  };
+  child.stdout.on("data", grab);
+  child.stderr.on("data", grab);
+  const timer = setTimeout(() => child.kill("SIGKILL"), TRY_TIMEOUT_MS);
+  const finish = (ok: boolean, fallback: string) => {
+    if (!running) return; // exit and error can both fire; report once
+    running = false;
+    clearTimeout(timer);
+    done(out.trim() || fallback, ok);
+  };
+  child.on("error", (e) => finish(false, String(e.message)));
+  child.on("close", (code) =>
+    finish(code === 0, `exit ${String(code)} (nessun output)`),
+  );
+}
 
 // Every 5 minutes is the cron floor in agent/schedules/heartbeat.ts; nothing
 // below it can be honoured, so it is not offered.
@@ -29,7 +79,10 @@ function current(): Required<Pick<HeartbeatSettings, "enabled">> &
   HeartbeatSettings {
   try {
     const hb = (readSettings() as { heartbeat?: HeartbeatSettings }).heartbeat;
-    return { enabled: hb?.enabled === true, intervalMinutes: hb?.intervalMinutes };
+    return {
+      enabled: hb?.enabled === true,
+      intervalMinutes: hb?.intervalMinutes,
+    };
   } catch {
     return { enabled: false };
   }
@@ -73,6 +126,13 @@ export default {
       INTERVALS.map((m) =>
         ctx.btn(`${m}m${interval === m ? " ✓" : ""}`, `iva_menu:hb:every:${m}`),
       ),
+      [
+        ctx.btn(
+          T("🔍 Test (no send)", "🔍 Проба (без отправки)"),
+          "iva_menu:hb:try:dry",
+        ),
+        ctx.btn(T("▶️ Beat now", "▶️ Ударить сейчас"), "iva_menu:hb:try:go"),
+      ],
       ctx.backRow("r"),
     ];
     return {
@@ -88,7 +148,41 @@ export default {
     };
   },
   async on(verb: string, args: string[], st: MenuState, ctx: MenuContext) {
+    const T = ctx.tr;
     const hb = current();
+    if (verb === "try") {
+      const dry = args[0] !== "go";
+      if (running) {
+        await ctx.flows.screen(
+          st,
+          T("💓 Already thinking…", "💓 Уже думает…"),
+          [ctx.backRow("hb")],
+        );
+        return;
+      }
+      await ctx.flows.screen(
+        st,
+        dry
+          ? T(
+              "💓 Thinking… (nothing will be sent)",
+              "💓 Думает… (ничего не отправит)",
+            )
+          : T("💓 Thinking…", "💓 Думает…"),
+        [],
+      );
+      runTick(dry, (output, ok) => {
+        const head = ok
+          ? T("💓 Done", "💓 Готово")
+          : T("💓 Failed", "💓 Не получилось");
+        void ctx.flows.screen(st, `${head}\n\n${output.slice(0, OUTPUT_MAX)}`, [
+          [
+            ctx.btn(T("🔁 Again", "🔁 Ещё раз"), `iva_menu:hb:try:${args[0]}`),
+            ...ctx.backRow("hb"),
+          ],
+        ]);
+      });
+      return;
+    }
     if (verb === "set") {
       writeSettings({ heartbeat: { ...hb, enabled: args[0] === "1" } });
     } else if (verb === "every") {
