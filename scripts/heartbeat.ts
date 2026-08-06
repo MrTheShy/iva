@@ -41,6 +41,13 @@ if (!BOT || !CHAT) {
   process.exit(1);
 }
 
+// --dry: think out loud and print, send nothing, touch no state. This is how
+// you tune the skill — run it ten times and count how often she picks PASS,
+// without ten messages arriving. Running this script by hand at all bypasses
+// the schedule's gates (enabled, interval, quiet hours) by design: those belong
+// to the tick, not to the thinking.
+const DRY = process.argv.includes("--dry");
+
 const state = await loadJsonStrict<HeartbeatState>(STATE_FILE, {});
 const now = Date.now();
 
@@ -48,7 +55,7 @@ const now = Date.now();
 // lastTickAt, and a think can outlast a cron slot — writing it at the end would
 // let a second tick start on top of a slow one. A crashed tick counting as
 // spent is the right trade: it costs one skipped interval, not a retry storm.
-await saveJsonAtomic(STATE_FILE, { ...state, lastTickAt: now });
+if (!DRY) await saveJsonAtomic(STATE_FILE, { ...state, lastTickAt: now });
 
 function hoursSince(at: number | undefined): string {
   if (!at) return "mai";
@@ -78,6 +85,7 @@ const response = await client.session().send(
 const result = await response.result();
 
 async function persist(patch: HeartbeatState): Promise<void> {
+  if (DRY) return;
   await saveJsonAtomic(STATE_FILE, { ...state, lastTickAt: now, ...patch });
 }
 
@@ -95,8 +103,14 @@ const text = result.message.trim();
 // Exact match only. A model that wraps PASS in a sentence has decided to talk,
 // and the visible failure (one message too many) beats the invisible one.
 if (text === "PASS") {
-  console.log("heartbeat: PASS");
+  console.log("heartbeat: PASS — niente da dire");
   await persist({ ticksSinceSpoke: (state.ticksSinceSpoke ?? 0) + 1 });
+  process.exit(0);
+}
+
+if (DRY) {
+  console.log("heartbeat: AVREBBE SCRITTO (--dry, non inviato)\n");
+  console.log(text);
   process.exit(0);
 }
 
