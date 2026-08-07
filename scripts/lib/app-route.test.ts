@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createAppRoute,
   createPairRoutes,
+  createPushRoutes,
   createVoiceRoute,
   type AppRouteConfig,
 } from "./app-route.ts";
@@ -445,4 +449,87 @@ void test("a code Telegram never delivered cannot be claimed", async () => {
   h.tick(31_000);
   // No live code survives a failed delivery — there is nothing to guess against.
   assert.equal((await h.routes.claim(claimRequest("000000"))).status, 401);
+});
+
+// --- push-token e inbox -----------------------------------------------------
+
+void test("a paired device registers its push token, capped at the newest five", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-push-"));
+  process.env.ASSISTANT_DATA_DIR = dir;
+  try {
+    let clock = 1_000;
+    const routes = createPushRoutes({
+      bearer: "secret-token",
+      chatId: "4242",
+      userId: "77",
+      echo: () => Promise.resolve(),
+      notify: () => Promise.resolve(true),
+      isBusy: () => false,
+      now: () => clock++,
+      timeoutMs: 120_000,
+    });
+    const register = (token: string, bearer: string | null = "secret-token") =>
+      routes.registerToken(
+        new Request("http://iva.local/eve/v1/app/push-token", {
+          method: "POST",
+          headers: bearer === null ? {} : { authorization: `Bearer ${bearer}` },
+          body: JSON.stringify({ token, platform: "wear" }),
+        }),
+      );
+
+    assert.equal((await register("x".repeat(40))).status, 200);
+    assert.equal((await register("y".repeat(40), null)).status, 401);
+    assert.equal((await register("short")).status, 400);
+    for (let i = 0; i < 6; i += 1) {
+      assert.equal(
+        (await register(`token-${i}-${"z".repeat(40)}`)).status,
+        200,
+      );
+    }
+    const stored = JSON.parse(
+      readFileSync(join(dir, "push-tokens.json"), "utf8"),
+    ) as { tokens: Record<string, unknown> };
+    assert.equal(Object.keys(stored.tokens).length, 5);
+    // Il più vecchio è stato spazzato dal cap.
+    assert.ok(!("x".repeat(40) in stored.tokens));
+  } finally {
+    delete process.env.ASSISTANT_DATA_DIR;
+  }
+});
+
+void test("the inbox hands back what the heartbeat parked, behind the bearer", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "iva-inbox-"));
+  process.env.ASSISTANT_DATA_DIR = dir;
+  try {
+    const routes = createPushRoutes({
+      bearer: "secret-token",
+      chatId: "4242",
+      userId: "77",
+      echo: () => Promise.resolve(),
+      notify: () => Promise.resolve(true),
+      isBusy: () => false,
+      now: () => 1_000,
+      timeoutMs: 120_000,
+    });
+    const read = (bearer: string | null = "secret-token") =>
+      routes.readInbox(
+        new Request("http://iva.local/eve/v1/app/inbox", {
+          method: "POST",
+          headers: bearer === null ? {} : { authorization: `Bearer ${bearer}` },
+          body: "{}",
+        }),
+      );
+
+    assert.equal((await read()).status, 404);
+    writeFileSync(
+      join(dir, "app-inbox.json"),
+      JSON.stringify({ text: "Poi, la fattura?", at: 7 }),
+    );
+    assert.equal((await read(null)).status, 401);
+    const ok = await read();
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { text: "Poi, la fattura?", at: 7 });
+  } finally {
+    delete process.env.ASSISTANT_DATA_DIR;
+  }
 });

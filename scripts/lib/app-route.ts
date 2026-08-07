@@ -23,7 +23,14 @@ import {
 } from "eve/channels/telegram";
 import { extractBearerToken } from "eve/channels/auth";
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
+import { join } from "node:path";
 import { chatKeyOf, getChatStatus } from "../../agent/lib/run-status.ts";
+import {
+  acquireLock,
+  loadJsonStrict,
+  releaseLock,
+  saveJsonAtomic,
+} from "../../agent/lib/json-store.ts";
 import { sendTelegramHtml } from "./telegram-send.ts";
 import { scanOutbound } from "./security-gate.ts";
 
@@ -360,6 +367,70 @@ async function readCode(request: Request): Promise<string | null> {
   if (typeof code !== "string") return null;
   const trimmed = code.trim();
   return /^\d{6}$/.test(trimmed) ? trimmed : null;
+}
+
+/** Newest tokens a device registry keeps: enough for a watch, a phone and churn. */
+const PUSH_TOKEN_CAP = 5;
+
+/**
+ * The wrist-call plumbing. `push-token` registers a device's FCM token (bearer
+ * required — only paired devices may ring). `inbox` hands back the last message
+ * the heartbeat spoke, so the push payload itself never carries content and
+ * Google only ever sees a wake-up impulse.
+ */
+export function createPushRoutes(config: AppRouteConfig) {
+  const dataDir = process.env.ASSISTANT_DATA_DIR ?? "data";
+  const storeFile = join(dataDir, "push-tokens.json");
+  const inboxFile = join(dataDir, "app-inbox.json");
+
+  async function registerToken(request: Request): Promise<Response> {
+    const rejected = unauthorized(config, request);
+    if (rejected) return rejected;
+    let parsed: unknown;
+    try {
+      parsed = await request.json();
+    } catch {
+      return json({ error: "token is required" }, 400);
+    }
+    const token = (parsed as { token?: unknown })?.token;
+    const platform = (parsed as { platform?: unknown })?.platform;
+    if (typeof token !== "string" || token.length < 20 || token.length > 4096)
+      return json({ error: "token is required" }, 400);
+    const lock = await acquireLock(`${storeFile}.lock`);
+    try {
+      const store = await loadJsonStrict<{
+        tokens?: Record<string, { platform: string; at: number }>;
+      }>(storeFile, {});
+      const tokens = { ...(store.tokens ?? {}) };
+      tokens[token] = {
+        platform:
+          typeof platform === "string" ? platform.slice(0, 20) : "unknown",
+        at: config.now(),
+      };
+      // Il registro non cresce per sempre: restano i più recenti.
+      const kept = Object.entries(tokens)
+        .sort(([, a], [, b]) => b.at - a.at)
+        .slice(0, PUSH_TOKEN_CAP);
+      await saveJsonAtomic(storeFile, { tokens: Object.fromEntries(kept) });
+    } finally {
+      releaseLock(`${storeFile}.lock`, lock);
+    }
+    return json({ ok: true }, 200);
+  }
+
+  async function readInbox(request: Request): Promise<Response> {
+    const rejected = unauthorized(config, request);
+    if (rejected) return rejected;
+    const inbox = await loadJsonStrict<{ text?: string; at?: number }>(
+      inboxFile,
+      {},
+    ).catch(() => ({}) as { text?: string; at?: number });
+    if (typeof inbox.text !== "string" || !inbox.text.trim())
+      return json({ error: "empty" }, 404);
+    return json({ text: inbox.text, at: inbox.at ?? 0 }, 200);
+  }
+
+  return { registerToken, readInbox };
 }
 
 /**

@@ -29,6 +29,7 @@ import {
   defaultMood,
   type Mood,
 } from "./lib/mood.ts";
+import { sendRing } from "./lib/fcm.ts";
 
 const PORT = process.env.IVA_PORT ?? "8723";
 const HOST = process.env.ASSISTANT_HOST ?? `http://127.0.0.1:${PORT}`;
@@ -284,4 +285,25 @@ await persist({
   // streak; if he did answer, the streak restarts at one.
   unanswered: ghosted ? (state.unanswered ?? 1) + 1 : 1,
 });
+
+// The wrist call: park the message in the inbox and wake the registered devices.
+// The push carries no content — the watch fetches it back over the bearer route.
+// Best-effort top to bottom: no Firebase, no tokens, no watch → Telegram already
+// delivered, and that is the contract that matters.
+try {
+  await saveJsonAtomic(join(DATA_DIR, "app-inbox.json"), {
+    text,
+    at: Date.now(),
+  });
+  const store = await loadJsonStrict<{
+    tokens?: Record<string, { platform: string; at: number }>;
+  }>(join(DATA_DIR, "push-tokens.json"), {});
+  const invalid = await sendRing(Object.keys(store.tokens ?? {}));
+  // ponytail: i token morti non si potano qui — il cap a 5 sul registro li
+  // spazza alla prossima registrazione, e un ring in più non costa niente.
+  if (invalid.length > 0)
+    console.log(`heartbeat: ${invalid.length} dead push tokens`);
+} catch (error) {
+  console.error("heartbeat: ring failed:", error);
+}
 console.log("heartbeat: spoke");

@@ -81,6 +81,7 @@ import {
 import {
   createAppRoute,
   createPairRoutes,
+  createPushRoutes,
   createVoiceRoute,
   defaultAppRouteConfig,
 } from "../../scripts/lib/app-route.ts";
@@ -1600,6 +1601,7 @@ const telegram = telegramChannel({
 const appRouteConfig = defaultAppRouteConfig();
 // Built once: cooldown, active code and guess budget must span requests.
 const appPairRoutes = createPairRoutes(appRouteConfig);
+const appPushRoutes = createPushRoutes(appRouteConfig);
 
 const telegramWebhookRoute = telegram.routes.find(
   (route) =>
@@ -1644,5 +1646,11 @@ export default {
     // trades it for the bearer. Nobody types 43 characters on a watch.
     POST("/eve/v1/app/pair", () => appPairRoutes.issue()),
     POST("/eve/v1/app/pair/claim", (request) => appPairRoutes.claim(request)),
+    // La chiamata dal polso: il watch registra il suo token FCM (autenticato) e,
+    // quando l'heartbeat parla, scarica il messaggio da qui — il push è solo sveglia.
+    POST("/eve/v1/app/push-token", (request) =>
+      appPushRoutes.registerToken(request),
+    ),
+    POST("/eve/v1/app/inbox", (request) => appPushRoutes.readInbox(request)),
   ],
 };
