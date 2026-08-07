@@ -70,18 +70,41 @@ class TurnController(
         if (spoken.isEmpty()) _state.value = TurnState.Idle else ask(spoken)
     }
 
-    /** Begins dictation. Speaking over an answer stops it, which is the point. */
+    // The recognizer gives up after every pause on its own and that is not
+    // reliably configurable. So the microphone is HELD: each time a segment
+    // ends, it reopens and keeps accumulating until the owner stops it himself.
+    private val heldText = StringBuilder()
+    private var holdOpen = false
+
+    /** Begins dictation and keeps the microphone open until [stopListening]. */
     fun startListening() {
         speaker.stop()
         _speaking.value = false
         turn?.cancel()
+        heldText.clear()
+        holdOpen = true
         _state.value = TurnState.Listening("")
         buzz(BUZZ_LISTENING)
+        listenSegment()
+    }
+
+    private fun listenSegment() {
         dictation.start(
-            onPartial = { partial -> _state.value = TurnState.Listening(partial) },
-            onResult = { text -> if (text == null) _state.value = TurnState.Idle else ask(text) },
-            onError = ::fail,
+            onPartial = { partial -> _state.value = TurnState.Listening(joined(partial)) },
+            onResult = { text ->
+                if (text != null) {
+                    heldText.append(text).append(' ')
+                    _state.value = TurnState.Listening(joined(""))
+                }
+                // Pausa ≠ fine: finché il proprietario non ferma lui, si riapre.
+                if (holdOpen) listenSegment() else finishListening()
+            },
+            onError = { message, detail ->
+                holdOpen = false
+                fail(message, detail)
+            },
             onServiceRefused = { detail ->
+                holdOpen = false
                 val fallback = onServiceRefused
                 if (fallback == null) {
                     fail("Il riconoscitore ha rifiutato la richiesta.", detail)
@@ -93,8 +116,18 @@ class TurnController(
         )
     }
 
-    /** Ends dictation; the final text still arrives and starts the turn. */
+    private fun joined(partial: String): String =
+        (heldText.toString() + partial).trim()
+
+    private fun finishListening() {
+        val text = heldText.toString().trim()
+        heldText.clear()
+        if (text.isEmpty()) _state.value = TurnState.Idle else ask(text)
+    }
+
+    /** The owner's stop: the segment closes, its last words arrive, the turn starts. */
     fun stopListening() {
+        holdOpen = false
         dictation.stopListening()
     }
 
@@ -106,6 +139,8 @@ class TurnController(
 
     /** Stops everything and goes quiet, without sending anything. */
     fun cancel() {
+        holdOpen = false
+        heldText.clear()
         turn?.cancel()
         dictation.stop()
         speaker.stop()
