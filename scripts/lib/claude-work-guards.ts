@@ -43,18 +43,69 @@ export function isSessionId(value: unknown): value is string {
   );
 }
 
-// Iva's own credentials must not reach a Claude that runs with permissions
-// bypassed: it reads repos, issues and web pages, so a prompt injection would
-// otherwise have DeepSeek, Telegram, Deepgram and Tavily keys in process.env.
-// Claude authenticates from ~/.claude, it needs none of them.
-const SECRET_RE = /(KEY|TOKEN|SECRET|BEARER|PASSWORD|CREDENTIAL)/i;
+/** One entry per project in data/claude-sessions.json. */
+export interface SessionEntry {
+  /** Claude Code session id — the conversation's memory lives on its side. */
+  id?: string;
+  /** Set while a leg's `claude` process may still be running. */
+  busyAt?: number;
+  /** Timestamps of recent legs, for the hard per-hour leash. */
+  legs?: number[];
+}
 
-export function scrubEnv(
+/** 8 GB, no swap: two claude processes next to iva.service is the ceiling. */
+export const MAX_CONCURRENT = 2;
+
+/**
+ * Hard leash on autonomous ping-pong. Judgment ("stop and report to Shy") is
+ * in the skill and Iva could talk herself past it; this cap cannot be argued
+ * with, and forces at most one hour of runaway before it stops itself.
+ */
+export const LEGS_PER_HOUR = 12;
+
+/** The claude exec timeout is 45 min; an older busy claim is a crashed leg. */
+export const BUSY_STALE_MS = 50 * 60_000;
+
+export function isBusy(entry: SessionEntry | undefined, now: number): boolean {
+  return typeof entry?.busyAt === "number" && now - entry.busyAt < BUSY_STALE_MS;
+}
+
+/** Legs younger than an hour; anything malformed is dropped, not counted. */
+export function pruneLegs(legs: unknown, now: number): number[] {
+  return Array.isArray(legs)
+    ? legs.filter(
+        (t): t is number => typeof t === "number" && now - t < 3_600_000,
+      )
+    : [];
+}
+
+// PHILOSOPHY bans blacklists as a security boundary — and the first version of
+// this function was one (a regex over variable names, so any secret with an
+// unmatched name rode through). Allowlist instead: only what a shell, git and
+// the claude CLI actually need. Claude authenticates from ~/.claude, so HOME
+// covers it; SSH_AUTH_SOCK lets git push over ssh without exposing a value.
+const ENV_ALLOW = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TERM",
+  "COLORTERM",
+  "LANG",
+  "TZ",
+  "TMPDIR",
+  "XDG_RUNTIME_DIR",
+  "SSH_AUTH_SOCK",
+] as const;
+
+export function envForClaude(
   env: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
+  for (const k of ENV_ALLOW) if (env[k] !== undefined) out[k] = env[k];
   for (const [k, v] of Object.entries(env)) {
-    if (v !== undefined && !SECRET_RE.test(k)) out[k] = v;
+    if (k.startsWith("LC_") && v !== undefined) out[k] = v;
   }
   return out;
 }
