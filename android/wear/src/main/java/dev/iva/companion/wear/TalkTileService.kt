@@ -63,6 +63,14 @@ class TalkTileService : TileService() {
                                         ActionBuilders.AndroidActivity.Builder()
                                             .setPackageName(packageName)
                                             .setClassName(MainActivity::class.java.name)
+                                            // From the tile you come to talk: the app
+                                            // opens already listening, one gesture.
+                                            .addKeyToExtraMapping(
+                                                MainActivity.EXTRA_LISTEN,
+                                                ActionBuilders.AndroidBooleanExtra.Builder()
+                                                    .setValue(true)
+                                                    .build(),
+                                            )
                                             .build(),
                                     )
                                     .build(),

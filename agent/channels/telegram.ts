@@ -80,6 +80,7 @@ import {
 } from "../../scripts/lib/telegram-turn-start.ts";
 import {
   createAppRoute,
+  createPairRoutes,
   createVoiceRoute,
   defaultAppRouteConfig,
 } from "../../scripts/lib/app-route.ts";
@@ -1597,6 +1598,8 @@ const telegram = telegramChannel({
 });
 
 const appRouteConfig = defaultAppRouteConfig();
+// Built once: cooldown, active code and guess budget must span requests.
+const appPairRoutes = createPairRoutes(appRouteConfig);
 
 const telegramWebhookRoute = telegram.routes.find(
   (route) =>
@@ -1637,5 +1640,9 @@ export default {
     // The same reply, spoken in Iva's own voice. Separate from the turn so the answer
     // reaches the app as soon as it exists and the audio follows.
     POST("/eve/v1/app/voice", createVoiceRoute(appRouteConfig)),
+    // Device pairing: a six-digit code lands in the owner's Telegram, the device
+    // trades it for the bearer. Nobody types 43 characters on a watch.
+    POST("/eve/v1/app/pair", () => appPairRoutes.issue()),
+    POST("/eve/v1/app/pair/claim", (request) => appPairRoutes.claim(request)),
   ],
 };

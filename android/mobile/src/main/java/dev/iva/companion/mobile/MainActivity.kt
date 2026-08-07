@@ -22,11 +22,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,12 +37,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import dev.iva.companion.Config
 import dev.iva.companion.ConfigSync
 import dev.iva.companion.Dictation
+import dev.iva.companion.IvaClient
+import dev.iva.companion.Pairing
 import dev.iva.companion.Settings
 import dev.iva.companion.TurnController
 import dev.iva.companion.TurnState
@@ -86,7 +91,11 @@ class MainActivity : ComponentActivity() {
         val askForMicrophone = registerForActivityResult(
             ActivityResultContracts.RequestPermission(),
         ) { granted ->
-            if (!granted) {
+            if (granted) {
+                // Whoever pressed wanted to talk, not to press again; the recognizer
+                // ends on its own when they stop speaking.
+                turns.startListening()
+            } else {
                 turns.fail(
                     "Senza microfono non posso ascoltarti.",
                     "permesso RECORD_AUDIO negato · concedilo da Impostazioni > App > Iva > Autorizzazioni",
@@ -142,6 +151,9 @@ class MainActivity : ComponentActivity() {
 private fun SettingsScreen(config: Config, onSave: (Config) -> Unit) {
     var url by remember { mutableStateOf(config.baseUrl) }
     var token by remember { mutableStateOf(config.token) }
+    var code by remember { mutableStateOf("") }
+    var pairStatus by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -151,8 +163,8 @@ private fun SettingsScreen(config: Config, onSave: (Config) -> Unit) {
     ) {
         Text("Iva", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Indirizzo del server e token dell'app. Il token è quello di IVA_APP_BEARER; " +
-                "l'orologio lo riceve da qui.",
+            "Scrivi l'indirizzo del server e fatti mandare un codice su Telegram: " +
+                "il token arriva da solo, e l'orologio lo riceve da qui.",
             style = MaterialTheme.typography.bodyMedium,
         )
         OutlinedTextField(
@@ -164,9 +176,47 @@ private fun SettingsScreen(config: Config, onSave: (Config) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
+            value = code,
+            onValueChange = { code = it.filter(Char::isDigit).take(6) },
+            label = { Text("Codice da Telegram") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                if (code.length == 6) {
+                    scope.launch {
+                        when (val outcome = IvaClient.claimPairCode(url, code)) {
+                            is Pairing.Paired -> onSave(Config(url, outcome.token))
+                            is Pairing.Refused -> pairStatus = outcome.message
+                            is Pairing.CodeSent -> Unit
+                        }
+                    }
+                } else {
+                    scope.launch {
+                        pairStatus = when (val outcome = IvaClient.requestPairCode(url)) {
+                            is Pairing.CodeSent -> "Codice inviato: guardalo su Telegram e scrivilo qui."
+                            is Pairing.Refused -> outcome.message
+                            is Pairing.Paired -> ""
+                        }
+                    }
+                }
+            },
+            enabled = url.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (code.length == 6) "Collega" else "Mandami un codice su Telegram")
+        }
+        if (pairStatus.isNotBlank()) {
+            Text(pairStatus, style = MaterialTheme.typography.bodyMedium)
+        }
+        // The escape hatch: the token is in the server's .env, and pasting it still
+        // works when Telegram does not.
+        OutlinedTextField(
             value = token,
             onValueChange = { token = it },
-            label = { Text("Token") },
+            label = { Text("Token (a mano, se serve)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )

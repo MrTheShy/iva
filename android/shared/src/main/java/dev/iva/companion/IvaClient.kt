@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.MalformedURLException
 import java.net.URL
 
 /** What came back from one voice turn. */
@@ -17,6 +18,19 @@ sealed interface Answer {
      * reported without plugging the phone into a computer.
      */
     data class Problem(val message: String, val detail: String = "") : Answer
+}
+
+/**
+ * One step of pairing: the device asks the server for a six-digit code, the code
+ * appears in the owner's Telegram, and typing it back trades it for the bearer token.
+ * Nobody copies 43 characters onto a watch.
+ */
+sealed interface Pairing {
+    data object CodeSent : Pairing
+
+    data class Paired(val token: String) : Pairing
+
+    data class Refused(val message: String, val detail: String = "") : Pairing
 }
 
 /**
@@ -46,21 +60,30 @@ object IvaClient {
                 "impostazioni incomplete: indirizzo=${config.baseUrl.isNotBlank()} token=${config.token.isNotBlank()}",
             )
         }
-        val connection = try {
-            (URL(config.endpoint).openConnection() as HttpURLConnection)
-        } catch (e: IOException) {
+        val url = try {
+            URL(config.endpoint)
+        } catch (e: MalformedURLException) {
             return@withContext Answer.Problem(
                 "Indirizzo non valido.",
                 "URL rifiutato: ${config.endpoint} · ${e.javaClass.simpleName}: ${e.message}",
             )
         }
+        // A watch mid-handoff between WiFi and LTE loses the first connect and nothing
+        // else, so one more try. Only here: past the connect the request may already be
+        // travelling, and resending it would run the turn twice.
+        val connection = try {
+            connect(url, config.token, READ_TIMEOUT_MS)
+        } catch (first: IOException) {
+            try {
+                connect(url, config.token, READ_TIMEOUT_MS)
+            } catch (e: IOException) {
+                return@withContext Answer.Problem(
+                    "Non riesco a raggiungere Iva.",
+                    "rete: ${e.javaClass.simpleName}: ${e.message} · ${config.endpoint}",
+                )
+            }
+        }
         try {
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.setRequestProperty("Authorization", "Bearer ${config.token}")
-            connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { out ->
                 out.write(JSONObject().put("text", text).toString().toByteArray())
             }
@@ -88,17 +111,12 @@ object IvaClient {
     suspend fun speak(config: Config, text: String): ByteArray? = withContext(Dispatchers.IO) {
         if (!config.isComplete) return@withContext null
         val connection = try {
-            URL(config.voiceEndpoint).openConnection() as HttpURLConnection
+            connect(URL(config.voiceEndpoint), config.token, VOICE_TIMEOUT_MS)
         } catch (e: IOException) {
+            // No retry for the voice: the text fallback is faster than a second try.
             return@withContext null
         }
         try {
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = VOICE_TIMEOUT_MS
-            connection.setRequestProperty("Authorization", "Bearer ${config.token}")
-            connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(JSONObject().put("text", text).toString().toByteArray()) }
             if (connection.responseCode !in 200..299) return@withContext null
             connection.inputStream.use { it.readBytes() }.takeIf { it.isNotEmpty() }
@@ -106,6 +124,97 @@ object IvaClient {
             null
         } finally {
             connection.disconnect()
+        }
+    }
+
+    /**
+     * Asks the server to send a pairing code to the owner's Telegram. No token yet —
+     * getting one is the whole point.
+     */
+    suspend fun requestPairCode(baseUrl: String): Pairing = withContext(Dispatchers.IO) {
+        pair(baseUrl, "", "{}") { status, _ ->
+            when (status) {
+                in 200..299 -> Pairing.CodeSent
+                429 -> Pairing.Refused("Aspetta mezzo minuto prima di chiedere un altro codice.")
+                502 -> Pairing.Refused("Il server non riesce a scrivere su Telegram.")
+                503 -> Pairing.Refused("Il server non è configurato.")
+                else -> Pairing.Refused("Errore $status.")
+            }
+        }
+    }
+
+    /** Trades the six digits read in Telegram for the token, which the caller stores. */
+    suspend fun claimPairCode(baseUrl: String, code: String): Pairing = withContext(Dispatchers.IO) {
+        val digits = code.trim()
+        if (!digits.matches(Regex("\\d{6}"))) {
+            return@withContext Pairing.Refused("Il codice è di 6 cifre.")
+        }
+        val body = JSONObject().put("code", digits).toString()
+        pair(baseUrl, "/claim", body) { status, answer ->
+            when (status) {
+                in 200..299 -> {
+                    val token = runCatching { JSONObject(answer).optString("token") }.getOrDefault("")
+                    if (token.isBlank()) Pairing.Refused("Il server non ha mandato il token.")
+                    else Pairing.Paired(token)
+                }
+                401 -> Pairing.Refused("Codice sbagliato o scaduto: chiedine un altro.")
+                429 -> Pairing.Refused("Troppi tentativi: chiedi un nuovo codice.")
+                503 -> Pairing.Refused("Il server non è configurato.")
+                else -> Pairing.Refused("Errore $status.")
+            }
+        }
+    }
+
+    /** One pairing POST: same wire shape for asking a code and for claiming it. */
+    private fun pair(
+        baseUrl: String,
+        suffix: String,
+        body: String,
+        read: (Int, String) -> Pairing,
+    ): Pairing {
+        val endpoint = baseUrl.trimEnd('/') + "/eve/v1/app/pair" + suffix
+        val connection = try {
+            connect(URL(endpoint), token = null, timeoutMs = CONNECT_TIMEOUT_MS)
+        } catch (e: IOException) {
+            return Pairing.Refused(
+                "Non riesco a raggiungere il server.",
+                "rete: ${e.javaClass.simpleName}: ${e.message} · $endpoint",
+            )
+        }
+        return try {
+            connection.outputStream.use { it.write(body.toByteArray()) }
+            val status = connection.responseCode
+            val answer = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+            read(status, answer)
+        } catch (e: IOException) {
+            Pairing.Refused(
+                "Non riesco a raggiungere il server.",
+                "rete: ${e.javaClass.simpleName}: ${e.message} · $endpoint",
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** Opens the socket before anything is sent, so a failure here is safe to retry. */
+    private fun connect(url: URL, token: String?, timeoutMs: Int): HttpURLConnection {
+        // A valid-but-non-http address (ftp://, file://) makes openConnection return a
+        // non-HttpURLConnection; the hard cast would throw ClassCastException, which no
+        // caller catches — the app crashes on every press. Turn it into the IOException
+        // callers already handle, so a bad address reads as "can't reach", not a crash.
+        val connection = url.openConnection() as? HttpURLConnection
+            ?: throw IOException("unsupported URL scheme: ${url.protocol} (use http or https)")
+        return connection.apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = timeoutMs
+            if (token != null) setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("Content-Type", "application/json")
+            connect()
         }
     }
 

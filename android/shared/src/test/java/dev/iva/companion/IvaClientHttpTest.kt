@@ -68,6 +68,42 @@ class IvaClientHttpTest {
         assertTrue(answer is Answer.Problem)
         assertNull(server.requestLine)
     }
+
+    @Test
+    fun `six digits from telegram trade for the token, without a bearer`() {
+        server.replyWith(200, """{"token":"secret-token"}""")
+
+        val outcome = runBlocking {
+            IvaClient.claimPairCode("http://127.0.0.1:${server.port}", " 123456 ")
+        }
+
+        assertEquals("POST /eve/v1/app/pair/claim HTTP/1.1", server.requestLine)
+        // Pairing is how the app GETS the bearer: it must not be asked to present one.
+        assertNull(server.header("authorization"))
+        assertEquals("123456", JSONObject(server.body.orEmpty()).getString("code"))
+        assertEquals(Pairing.Paired("secret-token"), outcome)
+    }
+
+    @Test
+    fun `a code that is not six digits never reaches the network`() {
+        val outcome = runBlocking {
+            IvaClient.claimPairCode("http://127.0.0.1:${server.port}", "12ab34")
+        }
+
+        assertTrue(outcome is Pairing.Refused)
+        assertNull(server.requestLine)
+    }
+
+    @Test
+    fun `a wrong code says so in words, not numbers`() {
+        server.replyWith(401, """{"error":"wrong code"}""")
+
+        val outcome = runBlocking {
+            IvaClient.claimPairCode("http://127.0.0.1:${server.port}", "000000")
+        }
+
+        assertTrue((outcome as Pairing.Refused).message.contains("Codice"))
+    }
 }
 
 /** Serves exactly one request on a free port and remembers what arrived. */

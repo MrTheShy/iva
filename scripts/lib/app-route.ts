@@ -22,13 +22,30 @@ import {
   type TelegramChannelState,
 } from "eve/channels/telegram";
 import { extractBearerToken } from "eve/channels/auth";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 import { chatKeyOf, getChatStatus } from "../../agent/lib/run-status.ts";
 import { sendTelegramHtml } from "./telegram-send.ts";
+import { scanOutbound } from "./security-gate.ts";
 
-/** Highest number of requests one token may spend per rolling minute. */
+/** Highest number of requests per rolling minute (each mounted route gets its own budget). */
 const RATE_LIMIT = 30;
 const RATE_WINDOW_MS = 60_000;
+/** A dictation is speech, not a document; anything past this is a client bug or an abuse. */
+const MAX_TEXT_CHARS = 12_000;
+const MAX_BODY_BYTES = 64 * 1024;
+
+/** Sliding-window limiter; one instance per route so a stolen token can't burn either freely. */
+function createRateLimiter(limit: number, windowMs: number) {
+  const hits: number[] = [];
+  return function rateLimited(now: number): boolean {
+    const cutoff = now - windowMs;
+    while (hits.length > 0 && hits[0] !== undefined && hits[0] <= cutoff)
+      hits.shift();
+    if (hits.length >= limit) return true;
+    hits.push(now);
+    return false;
+  };
+}
 /** How long a turn may run before the app gets 504 and stops waiting. */
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -46,6 +63,12 @@ export interface AppRouteConfig {
   readonly userId: string | undefined;
   /** Mirrors the dictated text into the chat. Never throws. */
   readonly echo: (text: string) => Promise<unknown>;
+  /**
+   * Delivers a service message (the pairing code) to the owner's chat. Returns false
+   * when Telegram did not take it — the caller must know, because a code nobody saw
+   * is a pairing that silently never completes.
+   */
+  readonly notify: (text: string) => Promise<boolean>;
   /** True while a turn is already running on that chat. */
   readonly isBusy: (chatId: string) => boolean;
   readonly now: () => number;
@@ -88,6 +111,16 @@ async function readText(request: Request): Promise<string | null> {
 }
 
 /**
+ * Rejects an oversized body before it is read into memory. A dictation is short; a
+ * multi-megabyte body is either a bug or an attempt to OOM the box or flood the chat
+ * with the echo (which gets chunked into a Telegram message per 4096 chars).
+ */
+function oversizedBody(request: Request): boolean {
+  const length = Number(request.headers.get("content-length"));
+  return Number.isFinite(length) && length > MAX_BODY_BYTES;
+}
+
+/**
  * Collects the assistant text of one turn from the session's durable event stream.
  *
  * `send` resolves as soon as the session accepts the message, not when the turn ends,
@@ -111,6 +144,12 @@ async function collectReply(
 > {
   const reader = stream.getReader();
   const parts: string[] = [];
+  // Lock onto OUR turn. We took the stream position before sending, so if another turn
+  // was already running its `turn.started` is behind us and only its tail is in view —
+  // skipping everything until the first `turn.started` drops that tail. After locking,
+  // events from any other (interleaved) turn are ignored: the app hears one answer, its
+  // own, never a racing turn's reply. Events carry `turnId`; the old code read none.
+  let turnId: string | undefined;
   try {
     for (;;) {
       const remaining = deadlineAt - now();
@@ -132,6 +171,16 @@ async function collectReply(
       if (step.done) return { status: "timeout" };
       const event = step.value;
       const data = event.data ?? {};
+      const eventTurn =
+        typeof data.turnId === "string" ? data.turnId : undefined;
+      if (event.type === "turn.started") {
+        if (turnId === undefined) turnId = eventTurn;
+        continue;
+      }
+      // Not our turn yet (still draining a turn that was live when we started), or a
+      // different turn's event once we have locked ours.
+      if (turnId === undefined) continue;
+      if (eventTurn !== undefined && eventTurn !== turnId) continue;
       if (event.type === "message.completed") {
         const message = data.message;
         if (
@@ -187,14 +236,20 @@ function unauthorized(
  * that stays silent because a model is down is worse than one that sounds generic.
  */
 export function createVoiceRoute(config: AppRouteConfig) {
+  const rateLimited = createRateLimiter(RATE_LIMIT, RATE_WINDOW_MS);
   return async function handleVoiceRequest(
     request: Request,
   ): Promise<Response> {
     const rejected = unauthorized(config, request);
     if (rejected) return rejected;
+    // Synthesis is the expensive endpoint (CPU, one at a time behind a global lock in
+    // server.py). Even an authenticated client must not be able to spin it unbounded.
+    if (rateLimited(config.now())) return json({ error: "slow down" }, 429);
+    if (oversizedBody(request)) return json({ error: "too large" }, 413);
 
     const text = await readText(request);
     if (text === null) return json({ error: "text is required" }, 400);
+    if (text.length > MAX_TEXT_CHARS) return json({ error: "too long" }, 413);
 
     try {
       const spoken = await fetch(VOICE_URL, {
@@ -218,22 +273,102 @@ export function createVoiceRoute(config: AppRouteConfig) {
   };
 }
 
+/** How long a pairing code stays claimable. */
+const PAIR_CODE_TTL_MS = 5 * 60_000;
+/** Minimum pause between two codes: an unauthenticated endpoint must not become a Telegram firehose. */
+const PAIR_ISSUE_COOLDOWN_MS = 30_000;
+/** Wrong guesses one code survives before it dies. 5 tries against 10^6 codes. */
+const PAIR_MAX_ATTEMPTS = 5;
+
+/**
+ * Device pairing: how a watch gets the bearer without anyone typing 43 characters
+ * on a watch. POST /pair sends a six-digit code to the owner's Telegram; POST
+ * /pair/claim trades that code for the bearer token.
+ *
+ * Both endpoints are deliberately unauthenticated — the whole point is that the
+ * device has no credentials yet. What keeps them safe: the code only ever appears in
+ * the owner's own chat, one code is active at a time, it dies after five wrong
+ * guesses or five minutes, and issuing is cooled down so strangers cannot spam the
+ * chat or farm guesses.
+ */
+export function createPairRoutes(config: AppRouteConfig) {
+  let active: {
+    code: string;
+    expiresAt: number;
+    attemptsLeft: number;
+  } | null = null;
+  let lastIssuedAt: number | null = null;
+
+  async function issue(): Promise<Response> {
+    if (!config.bearer?.trim()) return json({ error: "not configured" }, 503);
+    const now = config.now();
+    if (lastIssuedAt !== null && now - lastIssuedAt < PAIR_ISSUE_COOLDOWN_MS)
+      return json({ error: "slow down" }, 429);
+    lastIssuedAt = now;
+    const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
+    active = {
+      code,
+      expiresAt: now + PAIR_CODE_TTL_MS,
+      attemptsLeft: PAIR_MAX_ATTEMPTS,
+    };
+    const delivered = await config.notify(
+      `⌚ Codice per collegare l'app: <b>${code}</b> — vale 5 minuti. ` +
+        "Se non l'hai chiesto tu, ignoralo.",
+    );
+    if (!delivered) {
+      // A code nobody can read is only an extra guess window. Kill it.
+      active = null;
+      return json({ error: "telegram unavailable" }, 502);
+    }
+    return json({ ok: true }, 200);
+  }
+
+  async function claim(request: Request): Promise<Response> {
+    const bearer = config.bearer?.trim();
+    if (!bearer) return json({ error: "not configured" }, 503);
+    const code = await readCode(request);
+    if (code === null) return json({ error: "code is required" }, 400);
+    const current = active;
+    if (!current || config.now() > current.expiresAt)
+      return json({ error: "no active code" }, 401);
+    if (current.attemptsLeft <= 0) {
+      active = null;
+      return json({ error: "too many attempts" }, 429);
+    }
+    current.attemptsLeft -= 1;
+    if (!equalSecret(code, current.code))
+      return json({ error: "wrong code" }, 401);
+    // One code, one device: a claimed code must not keep working.
+    active = null;
+    return json({ token: bearer }, 200);
+  }
+
+  return { issue, claim };
+}
+
+/** The `code` field of the claim body: exactly six digits, or nothing. */
+async function readCode(request: Request): Promise<string | null> {
+  let parsed: unknown;
+  try {
+    parsed = await request.json();
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    return null;
+  const code = (parsed as { code?: unknown }).code;
+  if (typeof code !== "string") return null;
+  const trimmed = code.trim();
+  return /^\d{6}$/.test(trimmed) ? trimmed : null;
+}
+
 /**
  * Builds the route handler. Everything the handler touches beyond eve itself arrives
  * through {@link AppRouteConfig}, so the tests drive it without a server, a network,
  * or a Telegram token.
  */
 export function createAppRoute(config: AppRouteConfig) {
-  const hits: number[] = [];
-
-  function rateLimited(now: number): boolean {
-    const cutoff = now - RATE_WINDOW_MS;
-    while (hits.length > 0 && hits[0] !== undefined && hits[0] <= cutoff)
-      hits.shift();
-    if (hits.length >= RATE_LIMIT) return true;
-    hits.push(now);
-    return false;
-  }
+  const rateLimited = createRateLimiter(RATE_LIMIT, RATE_WINDOW_MS);
 
   return async function handleAppRequest(
     request: Request,
@@ -244,9 +379,11 @@ export function createAppRoute(config: AppRouteConfig) {
     if (!config.chatId || !config.userId)
       return json({ error: "chat not configured" }, 503);
     if (rateLimited(config.now())) return json({ error: "slow down" }, 429);
+    if (oversizedBody(request)) return json({ error: "too large" }, 413);
 
     const text = await readText(request);
     if (text === null) return json({ error: "text is required" }, 400);
+    if (text.length > MAX_TEXT_CHARS) return json({ error: "too long" }, 413);
 
     // The Telegram bridge buffers inbound messages while a turn runs; the app does
     // not pass through the bridge, so it would otherwise interleave with whatever
@@ -300,7 +437,10 @@ export function createAppRoute(config: AppRouteConfig) {
       return json({ error: "cancelled" }, 409);
     if (outcome.status === "failed")
       return json({ error: outcome.message }, 502);
-    return json({ reply: outcome.reply }, 200);
+    // The Telegram delivery path redacts leaked secrets via scanOutbound; the app reads
+    // the reply straight off the event stream, so redact it here too — otherwise the
+    // phone/watch would receive (and read aloud) what Telegram would have hidden.
+    return json({ reply: scanOutbound(outcome.reply).text }, 200);
   };
 }
 
@@ -323,6 +463,13 @@ export function defaultAppRouteConfig(
       if (!bot || !chatId) return;
       const result = await sendTelegramHtml(bot, chatId, `🎙 ${text}`);
       if (!result.ok) console.error("[app] echo failed:", result.error);
+    },
+    notify: async (text) => {
+      if (!bot || !chatId) return false;
+      const result = await sendTelegramHtml(bot, chatId, text);
+      if (!result.ok)
+        console.error("[app] pairing code not delivered:", result.error);
+      return result.ok;
     },
     isBusy: (chat) => getChatStatus(chatKeyOf(chat))?.status === "running",
     now: () => Date.now(),

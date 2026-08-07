@@ -63,7 +63,25 @@ the voice built into the device — a companion that goes silent because a model
 is worse than one that sounds generic.
 
 Setting it up: [scripts/voice/README.md](../scripts/voice/README.md). It is optional;
-without it the apps simply use the phone's voice.
+without it the apps simply use the phone's voice. The watch never asks for it: at the
+wrist an answer now, in the watch's own voice, beats an answer half a minute later in
+hers.
+
+## Pairing with a code
+
+Nobody types 43 characters on a watch. A device without a token asks for a code, the
+code lands in your Telegram, and typing the six digits back trades them for the bearer:
+
+```
+POST /eve/v1/app/pair            → sends a 6-digit code to your Telegram chat
+POST /eve/v1/app/pair/claim
+{ "code": "123456" }             → { "token": "<IVA_APP_BEARER>" }
+```
+
+Both endpoints are unauthenticated by design — the device has no credentials yet.
+What keeps them safe: the code only ever appears in your own chat, one code is active
+at a time, it dies after five wrong guesses or five minutes, and issuing is
+rate-limited to one code per 30 seconds so nobody can spam your chat or farm guesses.
 
 ## Turning it on
 
@@ -88,17 +106,22 @@ without it the apps simply use the phone's voice.
 
    ```
    iva.example.com {
-       handle /eve/v1/app {
+       @app path /eve/v1/app /eve/v1/app/*
+       handle @app {
            reverse_proxy 127.0.0.1:8723
        }
        respond 404
    }
    ```
 
+   The `/*` matters: the voice and pairing endpoints live under `/eve/v1/app/…`, and
+   an exact-path matcher would 404 them.
+
 4. Build and install the apps: [android/README.md](../android/README.md).
 
-5. Type the address and the token on the phone. The watch receives both over the
-   Wearable Data Layer and afterwards talks to the server on its own.
+5. On the phone, type the address and ask for a code on Telegram — the token arrives
+   by itself. The watch receives both over the Wearable Data Layer; a watch without
+   the phone app can pair on its own the same way, typing only the address.
 
 ## What guards it
 

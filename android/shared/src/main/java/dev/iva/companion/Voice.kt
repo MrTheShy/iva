@@ -5,6 +5,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
@@ -251,15 +254,33 @@ class Speaker(private val context: Context, private val onDone: () -> Unit = {})
         if (ready) engineLanguage()
     }
 
+    // Whatever else the device is playing pauses while Iva talks and resumes after.
+    // Without asking for focus she would speak over the podcast on the headphones.
+    private val audioManager = context.getSystemService(AudioManager::class.java)
+    private val attributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_ASSISTANT)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+    private val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        .setAudioAttributes(attributes)
+        .build()
+
     init {
+        engine.setAudioAttributes(attributes)
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) = Unit
             override fun onDone(utteranceId: String?) {
-                if (utteranceId == LAST_UTTERANCE) onDone()
+                if (utteranceId == LAST_UTTERANCE) {
+                    dropFocus()
+                    onDone()
+                }
             }
 
             @Deprecated("Required by the base class", ReplaceWith(""))
-            override fun onError(utteranceId: String?) = onDone()
+            override fun onError(utteranceId: String?) {
+                dropFocus()
+                onDone()
+            }
         })
     }
 
@@ -275,12 +296,16 @@ class Speaker(private val context: Context, private val onDone: () -> Unit = {})
     fun speak(text: String) {
         if (!ready) return
         val chunks = chunk(text, TextToSpeech.getMaxSpeechInputLength())
+        if (chunks.isEmpty()) {
+            onDone()
+            return
+        }
+        audioManager?.requestAudioFocus(focus)
         chunks.forEachIndexed { index, chunk ->
             val id = if (index == chunks.lastIndex) LAST_UTTERANCE else "part-$index"
             val mode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
             engine.speak(chunk, mode, null, id)
         }
-        if (chunks.isEmpty()) onDone()
     }
 
     /**
@@ -292,16 +317,19 @@ class Speaker(private val context: Context, private val onDone: () -> Unit = {})
         return try {
             val file = File(context.cacheDir, "reply.wav")
             file.writeBytes(wav)
+            audioManager?.requestAudioFocus(focus)
             player = MediaPlayer().apply {
+                setAudioAttributes(attributes)
                 setDataSource(file.path)
-                setOnCompletionListener { onDone() }
-                setOnErrorListener { _, _, _ -> onDone(); true }
+                setOnCompletionListener { dropFocus(); onDone() }
+                setOnErrorListener { _, _, _ -> dropFocus(); onDone(); true }
                 prepare()
                 start()
             }
             true
         } catch (failure: Exception) {
             Log.w("IvaSpeaker", "audio del server non riproducibile", failure)
+            dropFocus()
             player = null
             false
         }
@@ -312,6 +340,11 @@ class Speaker(private val context: Context, private val onDone: () -> Unit = {})
         player?.runCatching { stop() }
         player?.release()
         player = null
+        dropFocus()
+    }
+
+    private fun dropFocus() {
+        audioManager?.abandonAudioFocusRequest(focus)
     }
 
     fun shutdown() {

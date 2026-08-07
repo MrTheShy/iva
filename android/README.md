@@ -5,11 +5,16 @@ send only text to your own Iva server; the reply comes back in the same response
 read aloud. Everything you say from the wrist also lands in your Telegram chat, so that
 chat stays the archive.
 
-| Module    | What it is                                                     |
-| --------- | -------------------------------------------------------------- |
-| `shared`  | HTTP client, settings, dictation, speech, and the turn state machine |
-| `mobile`  | phone app: hold-to-talk, plus the settings screen                |
-| `wear`    | watch app: hold-to-talk and a tile, standalone over WiFi/LTE     |
+| Module   | What it is                                                           |
+| -------- | -------------------------------------------------------------------- |
+| `shared` | HTTP client, settings, dictation, speech, and the turn state machine |
+| `mobile` | phone app: hold-to-talk, plus the settings screen                    |
+| `wear`   | watch app: tap-to-talk and a tile, standalone over WiFi/LTE          |
+
+On the watch a tap starts the microphone and it stops by itself at the end of speech;
+the tile opens the app already listening. The wrist vibrates when listening starts,
+when the answer lands, and on failure — and the watch answers with its own voice
+immediately instead of waiting for the server to synthesise Iva's.
 
 ## Server side
 
@@ -23,19 +28,24 @@ work:
    ```
 
    Generate one with `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
-   An empty value locks the route: nobody gets in, by design.
+   An empty value locks the route: nobody gets in, by design. The apps never ask you
+   to type it: they trade a 6-digit code from Telegram for it (see below).
 
 2. Publish **only** that route over HTTPS. Everything else stays on `127.0.0.1:8723`.
    With Caddy:
 
    ```
    iva.example.com {
-       handle /eve/v1/app {
+       @app path /eve/v1/app /eve/v1/app/*
+       handle @app {
            reverse_proxy 127.0.0.1:8723
        }
        respond 404
    }
    ```
+
+   The `/*` matters: voice (`/eve/v1/app/voice`) and pairing (`/eve/v1/app/pair`)
+   live under the base path, and an exact matcher would 404 them.
 
 3. `TELEGRAM_DIGEST_CHAT_ID` and `TELEGRAM_ALLOWED_USER_IDS` must already be set — the
    route speaks into that chat as that user. Both are set up by `npm run setup`.
@@ -59,12 +69,17 @@ Unit tests, no device needed:
 JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew :shared:testDebugUnitTest
 ```
 
-## Pairing the watch
+## Pairing
 
-Type the address and token once on the phone and save. The phone publishes them on the
-Wearable Data Layer; the watch stores them the moment it sees them, and asks for them
-again at every start until it has a pair. That is the only thing the watch needs the
-phone for — after that it reaches the server on its own.
+Nobody types the token. On the phone: enter the address, tap «Mandami un codice su
+Telegram», read the six digits in your chat, type them, done — the app trades the code
+for the token (`POST /eve/v1/app/pair` → code in Telegram, `/pair/claim` → token).
+The phone then publishes address and token on the Wearable Data Layer; the watch
+stores them the moment it sees them.
+
+A watch without the phone app pairs by itself the same way: type only the address on
+the watch keyboard, ask for the code, type the six digits. Codes die after five wrong
+guesses or five minutes, one is active at a time, and issuing is rate-limited.
 
 ## What these apps deliberately do not do
 

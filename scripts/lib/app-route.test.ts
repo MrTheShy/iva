@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createAppRoute,
+  createPairRoutes,
   createVoiceRoute,
   type AppRouteConfig,
 } from "./app-route.ts";
@@ -44,6 +45,7 @@ function harness(
       echoed.push(text);
       return Promise.resolve();
     },
+    notify: () => Promise.resolve(true),
     isBusy: () => false,
     now: () => 1_000,
     timeoutMs: 120_000,
@@ -113,6 +115,32 @@ void test("a dictated turn answers with the assistant text and echoes once", asy
   assert.deepEqual(h.echoed, ["ricordami il latte"]);
   assert.equal(h.sent.length, 1);
   assert.equal(h.sent[0]?.text, "ricordami il latte");
+});
+
+void test("a turn already running when we start is not mistaken for our reply", async () => {
+  // The tail of another turn ("other") is in view because we took our stream
+  // position mid-flight; only OUR turn (t1) may be read back to the app.
+  const raced: StreamEvent[] = [
+    {
+      type: "message.completed",
+      data: {
+        finishReason: "stop",
+        turnId: "other",
+        message: "risposta all'altra domanda",
+      },
+    },
+    { type: "turn.completed", data: { turnId: "other" } },
+    { type: "turn.started", data: { turnId: "t1" } },
+    {
+      type: "message.completed",
+      data: { finishReason: "stop", turnId: "t1", message: "la mia risposta" },
+    },
+    { type: "turn.completed", data: { turnId: "t1" } },
+  ];
+  const h = harness(raced);
+  const response = await h.handler(request({ text: "domanda" }), h.args);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { reply: "la mia risposta" });
 });
 
 void test("the turn is addressed to the chat's own session", async () => {
@@ -254,6 +282,7 @@ function voiceHarness(upstream: (request: Request) => Promise<Response>) {
     chatId: "4242",
     userId: "77",
     echo: () => Promise.resolve(),
+    notify: () => Promise.resolve(true),
     isBusy: () => false,
     now: () => 1_000,
     timeoutMs: 120_000,
@@ -312,4 +341,108 @@ void test("a voice that is down says so, so the app can use its own", async (t) 
     (await unreachable.handler(request({ text: "ciao" }))).status,
     503,
   );
+});
+
+// --- il pairing con codice a 6 cifre ---------------------------------------
+
+function pairHarness(overrides: Partial<AppRouteConfig> = {}) {
+  const notified: string[] = [];
+  let now = 1_000;
+  const routes = createPairRoutes({
+    bearer: "secret-token",
+    chatId: "4242",
+    userId: "77",
+    echo: () => Promise.resolve(),
+    notify: (text) => {
+      notified.push(text);
+      return Promise.resolve(true);
+    },
+    isBusy: () => false,
+    now: () => now,
+    timeoutMs: 120_000,
+    ...overrides,
+  });
+  return {
+    routes,
+    notified,
+    // The last code that went out to Telegram — what the owner would type in.
+    code: () => /\b(\d{6})\b/.exec(notified.at(-1) ?? "")?.[1] ?? "",
+    tick: (ms: number) => (now += ms),
+  };
+}
+
+function claimRequest(code: unknown): Request {
+  return new Request("http://iva.local/eve/v1/app/pair/claim", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+void test("a code from Telegram trades for the bearer, exactly once", async () => {
+  const h = pairHarness();
+
+  assert.equal((await h.routes.issue()).status, 200);
+  assert.equal(h.notified.length, 1);
+  assert.match(h.code(), /^\d{6}$/);
+
+  const claimed = await h.routes.claim(claimRequest(h.code()));
+  assert.equal(claimed.status, 200);
+  assert.deepEqual(await claimed.json(), { token: "secret-token" });
+
+  // The same code must not hand the token to a second device.
+  assert.equal((await h.routes.claim(claimRequest(h.code()))).status, 401);
+});
+
+void test("wrong guesses burn the code before the space can be searched", async () => {
+  const h = pairHarness();
+  await h.routes.issue();
+
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal((await h.routes.claim(claimRequest("000000"))).status, 401);
+  }
+  // The guess budget is spent: even the right code is dead now.
+  assert.equal((await h.routes.claim(claimRequest(h.code()))).status, 429);
+  assert.equal((await h.routes.claim(claimRequest(h.code()))).status, 401);
+});
+
+void test("codes expire and issuing is cooled down", async () => {
+  const h = pairHarness();
+
+  await h.routes.issue();
+  assert.equal((await h.routes.issue()).status, 429);
+  h.tick(31_000);
+  assert.equal((await h.routes.issue()).status, 200);
+
+  h.tick(5 * 60_000 + 1);
+  assert.equal((await h.routes.claim(claimRequest(h.code()))).status, 401);
+});
+
+void test("a malformed claim is a client mistake, not a guess", async () => {
+  const h = pairHarness();
+  await h.routes.issue();
+
+  for (const code of ["12345", "1234567", "abcdef", 123456, null]) {
+    assert.equal(
+      (await h.routes.claim(claimRequest(code))).status,
+      400,
+      `code: ${String(code)}`,
+    );
+  }
+  // None of those touched the guess budget: the right code still works.
+  assert.equal((await h.routes.claim(claimRequest(h.code()))).status, 200);
+});
+
+void test("pairing is locked while the app secret is unset", async () => {
+  const h = pairHarness({ bearer: undefined });
+  assert.equal((await h.routes.issue()).status, 503);
+  assert.equal((await h.routes.claim(claimRequest("123456"))).status, 503);
+  assert.deepEqual(h.notified, []);
+});
+
+void test("a code Telegram never delivered cannot be claimed", async () => {
+  const h = pairHarness({ notify: () => Promise.resolve(false) });
+  assert.equal((await h.routes.issue()).status, 502);
+  h.tick(31_000);
+  // No live code survives a failed delivery — there is nothing to guess against.
+  assert.equal((await h.routes.claim(claimRequest("000000"))).status, 401);
 });
