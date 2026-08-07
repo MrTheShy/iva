@@ -36,11 +36,16 @@ class TurnController(
 ) {
     private val appContext = context.applicationContext
     private val dictation = Dictation(appContext)
-    private val speaker = Speaker(appContext)
     private val vibrator = appContext.getSystemService(Vibrator::class.java)
 
     private val _state = MutableStateFlow<TurnState>(TurnState.Idle)
     val state: StateFlow<TurnState> = _state.asStateFlow()
+
+    /** True while a voice is coming out of the device — what an avatar lip-syncs to. */
+    private val _speaking = MutableStateFlow(false)
+    val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
+
+    private val speaker = Speaker(appContext) { _speaking.value = false }
 
     private var turn: Job? = null
 
@@ -65,6 +70,7 @@ class TurnController(
     /** Begins dictation. Speaking over an answer stops it, which is the point. */
     fun startListening() {
         speaker.stop()
+        _speaking.value = false
         turn?.cancel()
         _state.value = TurnState.Listening("")
         buzz(BUZZ_LISTENING)
@@ -100,12 +106,14 @@ class TurnController(
         turn?.cancel()
         dictation.stop()
         speaker.stop()
+        _speaking.value = false
         _state.value = TurnState.Idle
     }
 
     /** Says the last answer again — the one thing you always want on a watch. */
     fun repeatLast() {
         val answered = _state.value as? TurnState.Answered ?: return
+        _speaking.value = true
         speaker.speak(answered.reply)
     }
 
@@ -125,12 +133,14 @@ class TurnController(
                     // Her voice when the server can make it, the device's when it
                     // cannot. Either way the answer is heard.
                     val voice = IvaClient.speak(config(), answer.reply)
+                    _speaking.value = true
                     if (voice == null || !speaker.play(voice)) speaker.speak(answer.reply)
                 }
                 is Answer.Problem -> {
                     fail(answer.message, answer.detail)
                     // Failures are spoken too: on the watch the screen is often already
                     // dark by the time an answer comes back.
+                    _speaking.value = true
                     speaker.speak(answer.message)
                 }
             }

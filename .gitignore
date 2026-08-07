@@ -41,3 +41,4 @@ AUDIT-*.md
 # Local dev context — secrets, VPS access. NEVER commit (public fork).
 DEV-CONTEXT.local.md
 *.local.md
+android/wear/src/main/assets/avatar/

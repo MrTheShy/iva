@@ -3,12 +3,14 @@ package dev.iva.companion.wear
 import android.Manifest
 import android.app.RemoteInput
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -18,17 +20,24 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.wear.ambient.AmbientLifecycleObserver
@@ -45,6 +54,8 @@ import dev.iva.companion.Pairing
 import dev.iva.companion.Settings
 import dev.iva.companion.TurnController
 import dev.iva.companion.TurnState
+import kotlin.random.Random
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -154,7 +165,13 @@ class MainActivity : ComponentActivity() {
                     else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
                 if (config.isComplete) {
-                    TalkFace(state = state, onTap = ::tapped)
+                    val speaking by turns.speaking.collectAsState()
+                    val avatar = rememberAvatar()
+                    if (avatar != null) {
+                        AvatarFace(state = state, speaking = speaking, frames = avatar, onTap = ::tapped)
+                    } else {
+                        TalkFace(state = state, onTap = ::tapped)
+                    }
                 } else {
                     PairFace(
                         address = config.baseUrl,
@@ -244,6 +261,114 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_LISTEN = "listen"
         private const val KEY_INPUT = "input"
+    }
+}
+
+/**
+ * The frames of a LivePNG-style avatar, when the build ships them. The folder is
+ * gitignored on purpose: character art has owners, the mechanism does not. Drop six
+ * PNGs into `wear/src/main/assets/avatar/` — idle, blink, talk1, talk2, smile, think —
+ * and the watch face becomes the character; leave it empty and the text face stays.
+ */
+@Composable
+private fun rememberAvatar(): Map<String, ImageBitmap>? {
+    val context = LocalContext.current
+    return remember {
+        runCatching {
+            listOf("idle", "blink", "talk1", "talk2", "smile", "think").associateWith { name ->
+                context.assets.open("avatar/$name.png").use { stream ->
+                    checkNotNull(BitmapFactory.decodeStream(stream)).asImageBitmap()
+                }
+            }
+        }.getOrNull()
+    }
+}
+
+/**
+ * The character does what the turn does: blinks while idle, looks up while the server
+ * thinks, moves her lips while the voice is out, smiles when the answer lands. The
+ * same two-frame lip flap the desktop LivePNG models use — on a watch nobody wants
+ * more, and the battery agrees.
+ */
+@Composable
+private fun AvatarFace(
+    state: TurnState,
+    speaking: Boolean,
+    frames: Map<String, ImageBitmap>,
+    onTap: () -> Unit,
+) {
+    var blink by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(Random.nextLong(2500, 5500))
+            blink = true
+            delay(120)
+            blink = false
+        }
+    }
+    var flap by remember { mutableStateOf(false) }
+    LaunchedEffect(speaking) {
+        if (!speaking) {
+            flap = false
+            return@LaunchedEffect
+        }
+        while (true) {
+            flap = !flap
+            delay(140)
+        }
+    }
+    val frame = when {
+        speaking -> if (flap) "talk2" else "talk1"
+        state is TurnState.Thinking -> "think"
+        state is TurnState.Answered -> "smile"
+        blink -> "blink"
+        else -> "idle"
+    }
+    // The avatar is transparent, so the state colour still reads behind her.
+    val backdrop = when (state) {
+        is TurnState.Listening -> MaterialTheme.colors.primary
+        is TurnState.Failed -> MaterialTheme.colors.error
+        else -> MaterialTheme.colors.background
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backdrop)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onTap() })
+            },
+    ) {
+        Image(
+            bitmap = frames.getValue(frame),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        val caption = when (state) {
+            is TurnState.Idle -> ""
+            is TurnState.Listening -> state.partial.ifBlank { "Ti ascolto…" }
+            is TurnState.Thinking -> "…"
+            is TurnState.Answered -> state.reply
+            is TurnState.Failed -> state.message
+        }
+        if (caption.isNotBlank()) {
+            Text(
+                text = caption,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.caption1,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 28.dp)
+                    .padding(bottom = 12.dp)
+                    .background(
+                        MaterialTheme.colors.background.copy(alpha = 0.65f),
+                        RoundedCornerShape(10.dp),
+                    )
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
     }
 }
 
