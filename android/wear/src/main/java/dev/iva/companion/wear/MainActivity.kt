@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,6 +61,7 @@ import dev.iva.companion.Dictation
 import dev.iva.companion.IvaClient
 import dev.iva.companion.Pairing
 import dev.iva.companion.Settings
+import dev.iva.companion.Speaker
 import dev.iva.companion.TurnController
 import dev.iva.companion.TurnState
 import kotlin.random.Random
@@ -78,6 +81,9 @@ class MainActivity : ComponentActivity() {
     private var listenOnResume = false
     private var ringOnResume = false
     private var pairStatus by mutableStateOf("")
+    private var showSettings by mutableStateOf(false)
+    private var tapBurst = 0
+    private var lastTapAt = 0L
 
     // SCREEN_BRIGHT è deprecato ma è l'unico attrezzo che tiene lo schermo pieno
     // CONTRO il gesto del polso: FLAG_KEEP_SCREEN_ON ferma solo il timeout, e una
@@ -96,7 +102,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = Settings.load(this)
-        turns = TurnController(this, lifecycleScope) { config }
+        turns = TurnController(
+            this,
+            lifecycleScope,
+            localVoice = { Settings.localVoice(this) },
+        ) { config }
 
         // With ambient support the watch face does not replace the app when the wrist
         // drops: the screen only dims, the turn in flight survives, and the answer is
@@ -214,13 +224,29 @@ class MainActivity : ComponentActivity() {
                         if (turnWakeLock.isHeld) turnWakeLock.release()
                     }
                 }
-                if (config.isComplete) {
+                if (showSettings) {
+                    SettingsFace(
+                        localVoice = Settings.localVoice(this),
+                        onLocalVoice = { value -> Settings.saveLocalVoice(this, value) },
+                        onClose = { showSettings = false },
+                    )
+                } else if (config.isComplete) {
                     val speaking by turns.speaking.collectAsState()
                     val avatar = rememberAvatar()
                     if (avatar != null) {
-                        AvatarFace(state = state, speaking = speaking, frames = avatar, onTap = ::tapped)
+                        AvatarFace(
+                            state = state,
+                            speaking = speaking,
+                            frames = avatar,
+                            onTap = ::tapped,
+                            onSettings = { showSettings = true },
+                        )
                     } else {
-                        TalkFace(state = state, onTap = ::tapped)
+                        TalkFace(
+                            state = state,
+                            onTap = ::tapped,
+                            onSettings = { showSettings = true },
+                        )
                     }
                 } else {
                     PairFace(
@@ -237,6 +263,18 @@ class MainActivity : ComponentActivity() {
 
     /** One gesture for the whole loop: tap to talk, tap again to stop early. */
     private fun tapped() {
+        // Dieci tocchi rapidi aprono le impostazioni (c'è anche la pressione
+        // lunga). Durante la raffica il microfono sfarfalla: pazienza — il tocco
+        // singolo deve restare istantaneo, niente debounce sul gesto principale.
+        val now = SystemClock.uptimeMillis()
+        tapBurst = if (now - lastTapAt < 400) tapBurst + 1 else 1
+        lastTapAt = now
+        if (tapBurst >= 10) {
+            tapBurst = 0
+            turns.cancel()
+            showSettings = true
+            return
+        }
         when {
             turns.state.value is TurnState.Listening -> turns.stopListening()
             turns.hasMicPermission -> turns.startListening()
@@ -377,6 +415,7 @@ private fun AvatarFace(
     speaking: Boolean,
     frames: Map<String, ImageBitmap>,
     onTap: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     var blink by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -411,12 +450,30 @@ private fun AvatarFace(
         is TurnState.Failed -> MaterialTheme.colors.error
         else -> MaterialTheme.colors.background
     }
+    // Sottotitoli col ritmo del parlato: mentre parla, una frase per volta
+    // (avanza a velocità di lettura); a voce finita, il testo intero scorribile.
+    // Mai più tre righe con i puntini che si mangiavano la risposta.
+    val reply = (state as? TurnState.Answered)?.reply.orEmpty()
+    val sentences = remember(reply) { Speaker.chunk(reply, 80) }
+    var sentence by remember(reply) { mutableStateOf(0) }
+    LaunchedEffect(reply, speaking) {
+        if (speaking && sentences.isNotEmpty()) {
+            for (i in sentences.indices) {
+                sentence = i
+                // ~65 ms a carattere ≈ il passo del sintetizzatore in italiano.
+                delay((sentences[i].length * 65L).coerceIn(1400L, 7000L))
+            }
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(backdrop)
             .pointerInput(Unit) {
-                detectTapGestures(onTap = { onTap() })
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onLongPress = { onSettings() },
+                )
             },
     ) {
         Image(
@@ -429,32 +486,85 @@ private fun AvatarFace(
             is TurnState.Idle -> ""
             is TurnState.Listening -> state.partial.ifBlank { "Ti ascolto…" }
             is TurnState.Thinking -> "…"
-            is TurnState.Answered -> state.reply
+            is TurnState.Answered ->
+                if (speaking) sentences.getOrElse(sentence) { "" } else reply
             is TurnState.Failed -> state.message
         }
+        val scrollable =
+            !speaking && (state is TurnState.Answered || state is TurnState.Failed)
         if (caption.isNotBlank()) {
-            Text(
-                text = caption,
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption1,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 28.dp)
-                    .padding(bottom = 12.dp)
-                    .background(
-                        MaterialTheme.colors.background.copy(alpha = 0.65f),
-                        RoundedCornerShape(10.dp),
+            val bubble = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 12.dp)
+                .background(
+                    MaterialTheme.colors.background.copy(alpha = 0.72f),
+                    RoundedCornerShape(12.dp),
+                )
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+            if (scrollable) {
+                Box(
+                    modifier = bubble
+                        .heightIn(max = 120.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    Text(
+                        text = caption,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption1,
                     )
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
+                }
+            } else {
+                Text(
+                    text = caption,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.caption1,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = bubble,
+                )
+            }
         }
     }
 }
 
+/** Dieci tocchi rapidi o una pressione lunga: qui. Voce di Iva o del dispositivo. */
 @Composable
-private fun TalkFace(state: TurnState, onTap: () -> Unit) {
+private fun SettingsFace(
+    localVoice: Boolean,
+    onLocalVoice: (Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
+    var local by remember { mutableStateOf(localVoice) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+    ) {
+        Text(
+            text = "Impostazioni",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.body2,
+        )
+        Action(if (local) "Voce: orologio" else "Voce: Iva (server)") {
+            local = !local
+            onLocalVoice(local)
+        }
+        Text(
+            text = if (local) "Risposta immediata, voce di sistema."
+            else "La sua voce vera, un attimo di attesa.",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.caption2,
+        )
+        Action("Chiudi", onClose)
+    }
+}
+
+@Composable
+private fun TalkFace(state: TurnState, onTap: () -> Unit, onSettings: () -> Unit) {
     // Colour is the only status indicator that survives a glance at arm's length.
     val backdrop = when (state) {
         is TurnState.Listening -> MaterialTheme.colors.primary
@@ -466,7 +576,10 @@ private fun TalkFace(state: TurnState, onTap: () -> Unit) {
             .fillMaxSize()
             .background(backdrop)
             .pointerInput(Unit) {
-                detectTapGestures(onTap = { onTap() })
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onLongPress = { onSettings() },
+                )
             },
         contentAlignment = Alignment.Center,
     ) {

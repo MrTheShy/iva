@@ -42,4 +42,18 @@ object Settings {
             .putString(KEY_TOKEN, config.token.trim())
             .apply()
     }
+
+    /** True = la voce del dispositivo, subito; false = la voce di Iva dal server. */
+    fun localVoice(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(KEY_LOCAL_VOICE, false)
+
+    fun saveLocalVoice(context: Context, value: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_LOCAL_VOICE, value)
+            .apply()
+    }
+
+    private const val KEY_LOCAL_VOICE = "local_voice"
 }

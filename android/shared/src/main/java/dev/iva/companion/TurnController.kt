@@ -32,6 +32,9 @@ sealed interface TurnState {
 class TurnController(
     context: Context,
     private val scope: CoroutineScope,
+    // True quando il proprietario preferisce la voce del dispositivo, subito,
+    // alla voce di Iva sintetizzata dal server (toggle nelle impostazioni watch).
+    private val localVoice: () -> Boolean = { false },
     private val config: () -> Config,
 ) {
     private val appContext = context.applicationContext
@@ -127,7 +130,7 @@ class TurnController(
         _state.value = TurnState.Answered("", reply)
         buzz(BUZZ_ANSWERED)
         turn = scope.launch {
-            val voice = IvaClient.speak(config(), reply)
+            val voice = if (localVoice()) null else IvaClient.speak(config(), reply)
             _speaking.value = true
             if (voice == null || !speaker.play(voice)) speaker.speak(reply)
         }
@@ -147,8 +150,9 @@ class TurnController(
                     _state.value = TurnState.Answered(text, answer.reply)
                     buzz(BUZZ_ANSWERED)
                     // Her voice when the server can make it, the device's when it
-                    // cannot. Either way the answer is heard.
-                    val voice = IvaClient.speak(config(), answer.reply)
+                    // cannot — or when the owner asked for the device's on purpose.
+                    val voice =
+                        if (localVoice()) null else IvaClient.speak(config(), answer.reply)
                     _speaking.value = true
                     if (voice == null || !speaker.play(voice)) speaker.speak(answer.reply)
                 }
