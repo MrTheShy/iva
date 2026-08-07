@@ -67,7 +67,9 @@ export const LEGS_PER_HOUR = 12;
 export const BUSY_STALE_MS = 50 * 60_000;
 
 export function isBusy(entry: SessionEntry | undefined, now: number): boolean {
-  return typeof entry?.busyAt === "number" && now - entry.busyAt < BUSY_STALE_MS;
+  return (
+    typeof entry?.busyAt === "number" && now - entry.busyAt < BUSY_STALE_MS
+  );
 }
 
 /** Legs younger than an hour; anything malformed is dropped, not counted. */

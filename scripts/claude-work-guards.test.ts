@@ -23,7 +23,10 @@ import {
 const CWD = "/srv/iva";
 
 test("a project resolves to one directory inside work/", () => {
-  assert.equal(resolveWorkdir("speedrush", CWD), join(CWD, "work", "speedrush"));
+  assert.equal(
+    resolveWorkdir("speedrush", CWD),
+    join(CWD, "work", "speedrush"),
+  );
   assert.equal(
     resolveWorkdir("zero-effort.it", CWD),
     join(CWD, "work", "zero-effort.it"),
@@ -112,7 +115,10 @@ test("the leash window keeps an hour of legs and drops garbage", () => {
     "not-a-number",
     null,
   ];
-  assert.deepEqual(pruneLegs(legs, now), [now - 30 * 60_000, now - 59 * 60_000]);
+  assert.deepEqual(pruneLegs(legs, now), [
+    now - 30 * 60_000,
+    now - 59 * 60_000,
+  ]);
   assert.deepEqual(pruneLegs(undefined, now), []);
   assert.deepEqual(pruneLegs("x", now), []);
 });
