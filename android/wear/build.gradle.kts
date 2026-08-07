@@ -53,5 +53,9 @@ dependencies {
     implementation(libs.androidx.wear.protolayout)
     implementation(libs.androidx.concurrent.futures)
     implementation(libs.play.services.wearable)
+    // Firebase senza il plugin google-services: l'app si inizializza a mano da
+    // assets/google-services.json (gitignorato) — senza file, niente push, tutto
+    // il resto vive. Così il repo pubblico non porta la config di nessuno.
+    implementation(libs.firebase.messaging)
     implementation(libs.kotlinx.coroutines.android)
 }

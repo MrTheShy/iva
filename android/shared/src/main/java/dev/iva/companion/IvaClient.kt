@@ -199,6 +199,46 @@ object IvaClient {
         }
     }
 
+    /**
+     * Registers this device's FCM token so the heartbeat can ring it. Bearer
+     * required: only a paired device may ring. Best-effort — false is "not now".
+     */
+    suspend fun registerPushToken(config: Config, token: String): Boolean =
+        withContext(Dispatchers.IO) {
+            if (!config.isComplete) return@withContext false
+            val body = JSONObject().put("token", token).put("platform", "wear").toString()
+            post(config, "/push-token", body) != null
+        }
+
+    /**
+     * The message the heartbeat parked for the wrist call, or null. The push that
+     * woke us carried no content on purpose: this is where the content lives.
+     */
+    suspend fun fetchInbox(config: Config): String? = withContext(Dispatchers.IO) {
+        val answer = post(config, "/inbox", "{}") ?: return@withContext null
+        runCatching { JSONObject(answer).optString("text") }
+            .getOrDefault("")
+            .takeIf { it.isNotBlank() }
+    }
+
+    /** One small authenticated POST under the app route; null on any failure. */
+    private fun post(config: Config, suffix: String, body: String): String? {
+        val connection = try {
+            connect(URL(config.endpoint + suffix), config.token, CONNECT_TIMEOUT_MS)
+        } catch (e: IOException) {
+            return null
+        }
+        return try {
+            connection.outputStream.use { it.write(body.toByteArray()) }
+            if (connection.responseCode !in 200..299) null
+            else connection.inputStream.bufferedReader().use { it.readText() }
+        } catch (e: IOException) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /** Opens the socket before anything is sent, so a failure here is safe to retry. */
     private fun connect(url: URL, token: String?, timeoutMs: Int): HttpURLConnection {
         // A valid-but-non-http address (ftp://, file://) makes openConnection return a

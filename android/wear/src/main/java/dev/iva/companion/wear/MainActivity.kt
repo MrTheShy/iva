@@ -3,7 +3,9 @@ package dev.iva.companion.wear
 import android.Manifest
 import android.app.RemoteInput
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -39,8 +41,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.wear.ambient.AmbientLifecycleObserver
+import com.google.firebase.FirebaseApp
+import com.google.firebase.messaging.FirebaseMessaging
 import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.MaterialTheme
@@ -69,6 +75,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var askForMicrophone: ActivityResultLauncher<String>
     private var config by mutableStateOf(Config("", ""))
     private var listenOnResume = false
+    private var ringOnResume = false
     private var pairStatus by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -153,6 +160,25 @@ class MainActivity : ComponentActivity() {
         }
 
         listenOnResume = intent.getBooleanExtra(EXTRA_LISTEN, false)
+        ringOnResume = intent.getBooleanExtra(EXTRA_RING, false)
+
+        // La chiamata dal polso vive di notifiche: chiesto una volta, quando c'è
+        // già un pairing (prima non c'è niente che possa squillare).
+        val askForNotifications = registerForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { }
+        if (config.isComplete) {
+            if (
+                Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                askForNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            registerPush()
+        }
 
         setContent {
             MaterialTheme {
@@ -227,6 +253,8 @@ class MainActivity : ComponentActivity() {
                     config = Config(config.baseUrl, outcome.token)
                     Settings.save(this@MainActivity, config)
                     pairStatus = ""
+                    // Appena c'è un pairing, il polso diventa raggiungibile.
+                    registerPush()
                 }
                 is Pairing.Refused -> pairStatus = outcome.message
                 is Pairing.CodeSent -> Unit
@@ -237,14 +265,37 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         listenOnResume = intent.getBooleanExtra(EXTRA_LISTEN, false)
+        ringOnResume = intent.getBooleanExtra(EXTRA_RING, false)
     }
 
     override fun onResume() {
         super.onResume()
+        // Answering the wrist call: fetch the parked message and let her say it.
+        if (ringOnResume) {
+            ringOnResume = false
+            if (config.isComplete) answerRing()
+            return
+        }
         // Coming from the tile the app opens already listening: one gesture, not two.
         if (listenOnResume) {
             listenOnResume = false
             if (config.isComplete) tapped()
+        }
+    }
+
+    /** The push said only «ring»; the content lives behind the bearer, and gets spoken. */
+    private fun answerRing() {
+        NotificationManagerCompat.from(this).cancel(PushService.RING_ID)
+        lifecycleScope.launch {
+            IvaClient.fetchInbox(config)?.let(turns::deliver)
+        }
+    }
+
+    /** Hands the FCM token to the server so the heartbeat can ring this wrist. */
+    private fun registerPush() {
+        if (FirebaseApp.getApps(this).isEmpty()) return
+        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+            PushService.register(this, token)
         }
     }
 
@@ -260,6 +311,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_LISTEN = "listen"
+        const val EXTRA_RING = "ring"
         private const val KEY_INPUT = "input"
     }
 }

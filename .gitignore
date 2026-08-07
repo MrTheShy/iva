@@ -42,3 +42,4 @@ AUDIT-*.md
 DEV-CONTEXT.local.md
 *.local.md
 android/wear/src/main/assets/avatar/
+android/wear/src/main/assets/google-services.json

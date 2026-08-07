@@ -117,6 +117,22 @@ class TurnController(
         speaker.speak(answered.reply)
     }
 
+    /**
+     * A message born on the server — the heartbeat's wrist call. Shown and spoken
+     * exactly like an answer, with her voice when the server can make it.
+     */
+    fun deliver(reply: String) {
+        turn?.cancel()
+        speaker.stop()
+        _state.value = TurnState.Answered("", reply)
+        buzz(BUZZ_ANSWERED)
+        turn = scope.launch {
+            val voice = IvaClient.speak(config(), reply)
+            _speaking.value = true
+            if (voice == null || !speaker.play(voice)) speaker.speak(reply)
+        }
+    }
+
     fun dispose() {
         turn?.cancel()
         dictation.stop()

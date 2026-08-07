@@ -12,6 +12,7 @@ wearTiles = "1.4.1"
 protolayout = "1.2.1"
 concurrentFutures = "1.2.0"
 playServicesWearable = "18.2.0"
+firebaseMessaging = "24.1.0"
 coroutines = "1.10.2"
 
 [libraries]
@@ -31,6 +32,7 @@ androidx-wear-tiles = { group = "androidx.wear.tiles", name = "tiles", version.r
 androidx-wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout", version.ref = "protolayout" }
 androidx-concurrent-futures = { group = "androidx.concurrent", name = "concurrent-futures", version.ref = "concurrentFutures" }
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
 junit = { group = "junit", name = "junit", version = "4.13.2" }
 json = { group = "org.json", name = "json", version = "20250107" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
