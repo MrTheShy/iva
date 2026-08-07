@@ -50,8 +50,7 @@ e aspetta un permesso. Non riparte da solo: o lo rilanci con una modalità perme
 adeguata, o lo dici a Shy. Un lavoro bloccato che nessuno guarda è tempo perso e
 basta.
 
-Una sessione sparita dall'elenco è finita. `claude agents --all --json` include
-anche quelle concluse.
+Una sessione sparita dall'elenco è finita.
 
 ## Quante alla volta
 
@@ -67,7 +66,7 @@ invece di riprovare.
   si risolve da solo.
 - **Finito** → il risultato, e dove guardarlo (worktree, branch, diff).
 - **In corso** → **niente.** Non aggiornare su un lavoro che sta semplicemente
-  lavorando. Se te lo chiede, `agents --json` e rispondi.
+  lavorando. Se te lo chiede, `action=list` e rispondi.
 
 ## Cosa NON fare
 
