@@ -13,10 +13,22 @@
 // Requires a running agent (eve start) plus TELEGRAM_BOT_TOKEN and
 // TELEGRAM_DIGEST_CHAT_ID. Scheduled by agent/schedules/heartbeat.ts.
 import { Client } from "eve/client";
+import { spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { sendTelegramHtml } from "./lib/telegram-send.ts";
-import { loadJsonStrict, saveJsonAtomic } from "../agent/lib/json-store.ts";
+import {
+  acquireLock,
+  loadJsonStrict,
+  releaseLock,
+  saveJsonAtomic,
+} from "../agent/lib/json-store.ts";
+import {
+  applyAbsence,
+  applyDecay,
+  defaultMood,
+  type Mood,
+} from "./lib/mood.ts";
 
 const PORT = process.env.IVA_PORT ?? "8723";
 const HOST = process.env.ASSISTANT_HOST ?? `http://127.0.0.1:${PORT}`;
@@ -29,6 +41,7 @@ const DATA_DIR = DATA_DIR_RAW.startsWith("/")
   ? DATA_DIR_RAW
   : join(process.cwd(), DATA_DIR_RAW);
 const STATE_FILE = join(DATA_DIR, "heartbeat.json");
+const LOCK = `${STATE_FILE}.lock`;
 
 interface HeartbeatState {
   lastTickAt?: number;
@@ -37,6 +50,22 @@ interface HeartbeatState {
   ticksSinceSpoke?: number;
   /** Consecutive initiative messages Shy never answered. */
   unanswered?: number;
+}
+
+// Every write is a locked read-modify-write against the CURRENT file, not the
+// snapshot loaded at process start: a menu "Beat now" racing a scheduled tick must
+// not clobber the other's lastSpokeAt/lastMessage (the "don't repeat yourself"
+// evidence). The lock spans one file write, never the think.
+async function withState(
+  update: (current: HeartbeatState) => HeartbeatState,
+): Promise<void> {
+  const token = await acquireLock(LOCK);
+  try {
+    const current = await loadJsonStrict<HeartbeatState>(STATE_FILE, {});
+    await saveJsonAtomic(STATE_FILE, update(current));
+  } finally {
+    releaseLock(LOCK, token);
+  }
 }
 
 if (!BOT || !CHAT) {
@@ -54,11 +83,23 @@ const DRY = process.argv.includes("--dry");
 const state = await loadJsonStrict<HeartbeatState>(STATE_FILE, {});
 const now = Date.now();
 
+// He's mid-conversation — don't barge in. The chat's run-status file is touched by
+// every chat turn, so recent activity means a turn is running or just ended. A fresh
+// tick session can't see the chat, so this deterministic gate is the only way to
+// honour heartbeat.md's "if he's clearly busy, wait". No claim on this path: the next
+// 5-minute slot re-checks cheaply and ticks as soon as the chat goes quiet.
+const RECENT_CHAT_MS = 3 * 60_000;
+const chatAt = lastChatActivity();
+if (!DRY && chatAt !== null && now - chatAt < RECENT_CHAT_MS) {
+  console.log("heartbeat: chat active, holding off");
+  process.exit(0);
+}
+
 // Claim the tick BEFORE thinking, not after. The schedule spaces ticks by
 // lastTickAt, and a think can outlast a cron slot — writing it at the end would
 // let a second tick start on top of a slow one. A crashed tick counting as
 // spent is the right trade: it costs one skipped interval, not a retry storm.
-if (!DRY) await saveJsonAtomic(STATE_FILE, { ...state, lastTickAt: now });
+if (!DRY) await withState((current) => ({ ...current, lastTickAt: now }));
 
 function hoursSince(at: number | undefined): string {
   if (!at) return "mai";
@@ -82,11 +123,52 @@ function lastChatActivity(): number | null {
   }
 }
 
-const chatAt = lastChatActivity();
 const ghosted =
   typeof state.lastSpokeAt === "number" &&
   chatAt !== null &&
   chatAt < state.lastSpokeAt;
+
+// The affective state evolves while nobody talks: moods drift back to baseline,
+// and past 12 hours of silence curiosity builds up — but only in a warm
+// relationship (scripts/lib/mood.ts). The tick is the only writer on this path;
+// the other one is the appraisal hook at the end of each chat turn.
+const MOOD_FILE = join(DATA_DIR, "mood.json");
+const MOOD_LOCK = `${MOOD_FILE}.lock`;
+async function evolveMood(): Promise<Mood> {
+  const token = await acquireLock(MOOD_LOCK);
+  try {
+    const current = await loadJsonStrict<Mood>(MOOD_FILE, defaultMood(now));
+    let mood = applyDecay(current, (now - current.updatedAt) / 3_600_000, now);
+    if (chatAt !== null)
+      mood = applyAbsence(mood, (now - chatAt) / 3_600_000, now);
+    if (!DRY) await saveJsonAtomic(MOOD_FILE, mood);
+    return mood;
+  } finally {
+    releaseLock(MOOD_LOCK, token);
+  }
+}
+const mood = await evolveMood();
+
+// A high-salience memory from the cold tiers, for reminiscence. Best-effort:
+// no uv, no vault, no salient cards — no line in the prompt, never a failure.
+function resurfacedMemories(): string {
+  const vaultRaw = process.env.ASSISTANT_VAULT_DIR ?? "vault";
+  const vault = vaultRaw.startsWith("/") ? vaultRaw : resolve(vaultRaw);
+  const engine = resolve("scripts/autograph/engine.py");
+  try {
+    const r = spawnSync(
+      "uv",
+      ["run", engine, "creative", "3", ".", "--min-salience", "0.6"],
+      { cwd: vault, encoding: "utf8", timeout: 20_000 },
+    );
+    if (r.status !== 0) return "";
+    const out = (r.stdout ?? "").trim();
+    return out.includes("[") ? out : "";
+  } catch {
+    return "";
+  }
+}
+const memories = resurfacedMemories();
 
 const client = new Client({
   host: HOST,
@@ -113,6 +195,25 @@ const response = await client.session().send(
       : state.lastSpokeAt
         ? ["Shy ha scritto in chat dopo il tuo ultimo messaggio."]
         : []),
+    `Il tuo stato affettivo: calore ${Math.round(mood.calore)}/100 · ` +
+      `energia percepita di Shy ${Math.round(mood.energia)}/100 · ` +
+      `curiosità ${Math.round(mood.curiosita)}/100.`,
+    ...(mood.ultimaChiusura
+      ? [
+          `L'ultima conversazione si è chiusa ${mood.ultimaChiusura.tono} ` +
+            `(${hoursSince(mood.ultimaChiusura.at)})` +
+            (mood.ultimaChiusura.temaAperto
+              ? ` — tema rimasto aperto: «${mood.ultimaChiusura.temaAperto}».`
+              : "."),
+        ]
+      : []),
+    ...(memories
+      ? [
+          "Ricordi riaffiorati dall'archivio (alta salienza, non toccati da tempo). " +
+            "Riaprine uno SOLO se riaprirlo è utile a lui, non per riempire il silenzio:",
+          memories,
+        ]
+      : []),
     "Rispondi con PASS oppure con il solo testo del messaggio.",
     // Silence is the right answer most of the time, but a bare PASS is
     // untunable: you cannot tell good judgment from a tick that looked at
@@ -131,7 +232,9 @@ const result = await response.result();
 
 async function persist(patch: HeartbeatState): Promise<void> {
   if (DRY) return;
-  await saveJsonAtomic(STATE_FILE, { ...state, lastTickAt: now, ...patch });
+  // Merge onto the CURRENT file under the lock, not the start-of-tick snapshot, so a
+  // concurrent tick's lastSpokeAt/lastMessage survives.
+  await withState((current) => ({ ...current, lastTickAt: now, ...patch }));
 }
 
 if (result.status === "failed" || !result.message) {
@@ -172,7 +275,9 @@ if (!sent.ok) {
 }
 
 await persist({
-  lastSpokeAt: now,
+  // Send time, not tick-start: a message Shy sends DURING the think must count as
+  // "after we spoke" so the next tick's ghost check reads it correctly.
+  lastSpokeAt: Date.now(),
   lastMessage: text,
   ticksSinceSpoke: 0,
   // If he never answered the previous one, this message joins the unanswered

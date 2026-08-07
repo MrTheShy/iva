@@ -56,11 +56,7 @@ test("an open thread keeps curiosity at least at 60", () => {
 
 test("values never leave 0..100", () => {
   const hot = { ...defaultMood(0), calore: 99, energia: 99 };
-  const out = applyAppraisal(
-    hot,
-    appraisal({ valenza: 1, intensita: 1 }),
-    NOW,
-  );
+  const out = applyAppraisal(hot, appraisal({ valenza: 1, intensita: 1 }), NOW);
   assert.equal(out.calore, 100);
   assert.equal(out.energia, 100);
 });
@@ -119,8 +115,9 @@ test("garbage, wrong closures and missing numbers become null, never a crash", (
 
 test("an empty open theme is null, a long one is cut at 80 chars", () => {
   assert.equal(
-    parseAppraisal('{"valenza":0,"intensita":0,"chiusura":"neutra","temaAperto":"   "}')
-      ?.temaAperto,
+    parseAppraisal(
+      '{"valenza":0,"intensita":0,"chiusura":"neutra","temaAperto":"   "}',
+    )?.temaAperto,
     null,
   );
   const long = parseAppraisal(

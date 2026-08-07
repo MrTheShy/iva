@@ -67,7 +67,11 @@ export function applyDecay(mood: Mood, ore: number, now: number): Mood {
  * L'assenza fa crescere la curiosità («chissà come sta»), ma solo in una relazione
  * calda: una relazione fredda non accumula ansia da abbandono.
  */
-export function applyAbsence(mood: Mood, oreDiSilenzio: number, now: number): Mood {
+export function applyAbsence(
+  mood: Mood,
+  oreDiSilenzio: number,
+  now: number,
+): Mood {
   if (oreDiSilenzio <= 12 || mood.calore < 40) return mood;
   return {
     ...mood,
@@ -121,7 +125,8 @@ export function moodLine(mood: Mood, lang: "ru" | "en"): string {
   const q = Math.round(mood.curiosita);
   const tema = mood.ultimaChiusura?.temaAperto ?? null;
   if (lang === "en") {
-    const low = e < 40 ? " (low: keep replies sober and concrete, no banter)" : "";
+    const low =
+      e < 40 ? " (low: keep replies sober and concrete, no banter)" : "";
     const thread = tema ? ` — open thread: “${tema}”` : "";
     return (
       `Affective state: warmth ${c}/100 · owner's perceived energy ${e}/100${low} · curiosity ${q}/100${thread}.\n` +

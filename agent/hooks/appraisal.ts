@@ -62,7 +62,10 @@ function dailyTail(): string {
     day: "2-digit",
   }).format(new Date());
   try {
-    const text = readFileSync(join(VAULT_DIR, "daily", `${localDate}.md`), "utf8");
+    const text = readFileSync(
+      join(VAULT_DIR, "daily", `${localDate}.md`),
+      "utf8",
+    );
     return text.slice(-2000);
   } catch {
     return "";
@@ -126,7 +129,10 @@ async function runAppraisal(): Promise<void> {
   const token = await acquireLock(MOOD_LOCK);
   try {
     const mood = await loadJsonStrict<Mood>(MOOD_FILE, defaultMood(now));
-    await saveJsonAtomic(MOOD_FILE, applyAppraisal(mood, appraisal, Date.now()));
+    await saveJsonAtomic(
+      MOOD_FILE,
+      applyAppraisal(mood, appraisal, Date.now()),
+    );
   } finally {
     releaseLock(MOOD_LOCK, token);
   }

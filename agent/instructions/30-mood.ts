@@ -12,7 +12,9 @@ const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
 function readJson(file: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    return parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null;
   } catch {
