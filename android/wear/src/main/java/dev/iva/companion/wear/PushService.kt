@@ -1,8 +1,10 @@
 package dev.iva.companion.wear
 
+import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -45,11 +47,23 @@ class PushService : FirebaseMessagingService() {
         val intent = Intent(this, MainActivity::class.java)
             .putExtra(MainActivity.EXTRA_RING, true)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Da Android 14 il lancio full-screen da notifica è «background activity
+        // launch»: senza l'opt-in del creatore, sysui lo blocca in silenzio.
+        val options = if (Build.VERSION.SDK_INT >= 34) {
+            ActivityOptions.makeBasic()
+                .setPendingIntentCreatorBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED,
+                )
+                .toBundle()
+        } else {
+            null
+        }
         val pending = PendingIntent.getActivity(
             this,
             0,
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            options,
         )
         val notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(SharedR.drawable.ic_iva)

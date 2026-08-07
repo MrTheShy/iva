@@ -174,7 +174,7 @@ class MainActivity : ComponentActivity() {
             if (typed.isNotEmpty()) claimPairCode(typed)
         }
 
-        listenOnResume = intent.getBooleanExtra(EXTRA_LISTEN, false)
+        listenOnResume = intent.getBooleanExtra(EXTRA_LISTEN, false) || isAssist(intent)
         ringOnResume = intent.getBooleanExtra(EXTRA_RING, false)
 
         // La chiamata dal polso vive di notifiche: chiesto una volta, quando c'è
@@ -288,9 +288,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        listenOnResume = intent.getBooleanExtra(EXTRA_LISTEN, false)
+        listenOnResume = intent.getBooleanExtra(EXTRA_LISTEN, false) || isAssist(intent)
         ringOnResume = intent.getBooleanExtra(EXTRA_RING, false)
     }
+
+    /** Aperta come assistente (tasto dedicato): si parte già in ascolto. */
+    private fun isAssist(intent: Intent): Boolean =
+        intent.action == Intent.ACTION_ASSIST || intent.action == Intent.ACTION_VOICE_COMMAND
 
     override fun onResume() {
         super.onResume()
