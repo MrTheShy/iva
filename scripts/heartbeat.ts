@@ -96,39 +96,37 @@ const client = new Client({
 // The last message is quoted back so she can tell repetition from novelty —
 // the skill's hardest rule ("don't say it twice") needs the evidence, and a
 // fresh session has no memory of what the previous tick sent.
-const response = await client
-  .session()
-  .send(
-    [
-      "Battito. Nessuno ti ha scritto: ti sei svegliata da sola.",
-      "Carica lo skill `heartbeat` e seguilo.",
-      `Hai parlato di tua iniziativa l'ultima volta: ${hoursSince(state.lastSpokeAt)}.`,
-      state.lastMessage
-        ? `L'ultima cosa che gli hai detto di tua iniziativa: «${state.lastMessage}»`
-        : "Non gli hai mai scritto di tua iniziativa.",
-      ...(ghosted
-        ? [
-            `Shy NON ha più scritto in chat dopo quel messaggio ` +
-              `(ti ha lasciata senza risposta; suoi messaggi mancati di fila: ` +
-              `${state.unanswered ?? 1}).`,
-          ]
-        : state.lastSpokeAt
-          ? ["Shy ha scritto in chat dopo il tuo ultimo messaggio."]
-          : []),
-      "Rispondi con PASS oppure con il solo testo del messaggio.",
-      // Silence is the right answer most of the time, but a bare PASS is
-      // untunable: you cannot tell good judgment from a tick that looked at
-      // nothing. In a dry run only, ask for the reasoning — real ticks stay
-      // strict so the exact-match check below keeps working.
-      ...(DRY
-        ? [
-            "SEI IN PROVA: dopo PASS vai a capo e scrivi 2-3 righe su cosa hai",
-            "guardato (CORE, task aperte, log di oggi) e perché non vale la pena",
-            "parlare. Se invece scrivi il messaggio, non aggiungere spiegazioni.",
-          ]
+const response = await client.session().send(
+  [
+    "Battito. Nessuno ti ha scritto: ti sei svegliata da sola.",
+    "Carica lo skill `heartbeat` e seguilo.",
+    `Hai parlato di tua iniziativa l'ultima volta: ${hoursSince(state.lastSpokeAt)}.`,
+    state.lastMessage
+      ? `L'ultima cosa che gli hai detto di tua iniziativa: «${state.lastMessage}»`
+      : "Non gli hai mai scritto di tua iniziativa.",
+    ...(ghosted
+      ? [
+          `Shy NON ha più scritto in chat dopo quel messaggio ` +
+            `(ti ha lasciata senza risposta; suoi messaggi mancati di fila: ` +
+            `${state.unanswered ?? 1}).`,
+        ]
+      : state.lastSpokeAt
+        ? ["Shy ha scritto in chat dopo il tuo ultimo messaggio."]
         : []),
-    ].join("\n"),
-  );
+    "Rispondi con PASS oppure con il solo testo del messaggio.",
+    // Silence is the right answer most of the time, but a bare PASS is
+    // untunable: you cannot tell good judgment from a tick that looked at
+    // nothing. In a dry run only, ask for the reasoning — real ticks stay
+    // strict so the exact-match check below keeps working.
+    ...(DRY
+      ? [
+          "SEI IN PROVA: dopo PASS vai a capo e scrivi 2-3 righe su cosa hai",
+          "guardato (CORE, task aperte, log di oggi) e perché non vale la pena",
+          "parlare. Se invece scrivi il messaggio, non aggiungere spiegazioni.",
+        ]
+      : []),
+  ].join("\n"),
+);
 const result = await response.result();
 
 async function persist(patch: HeartbeatState): Promise<void> {

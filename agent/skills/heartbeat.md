@@ -29,7 +29,7 @@ giornata intera di silenzio con task aperte è un fallimento, non discrezione.
    parlato l'ultima volta di tua iniziativa e cosa hai detto (è nel prompt).
    Se ci sono conversazioni con Claude (`claude_work action=sessions`): una
    risposta rimasta senza seguito vale la pena, uno scambio in corso no.
-2. **Chiediti:** cosa gli sarebbe utile sentirsi dire *adesso*? Un promemoria,
+2. **Chiediti:** cosa gli sarebbe utile sentirsi dire _adesso_? Un promemoria,
    una domanda, un collegamento, o niente?
 3. **Se c'è qualcosa**, scrivi il messaggio — vedi sotto.
 4. **Se no**, rispondi esattamente `PASS`.
