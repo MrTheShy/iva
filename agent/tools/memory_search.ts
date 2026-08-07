@@ -1,10 +1,11 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { appendFile, readdir, readFile, stat } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { createRequire } from "node:module";
 import { embedTexts, cosine, hasEmbeddingKey } from "../lib/embeddings.js";
+import { memoryWeight } from "../../scripts/lib/memory-weight.ts";
 
 // node:sqlite — встроенный модуль (Node 24+). В ESM нет глобального require, поэтому
 // поднимаем его через createRequire; грузим лениво внутри bm25Search (с fallback, если нет).
@@ -42,6 +43,10 @@ interface Doc {
   status: string;
   confidence: string;
   source: string;
+  // Campi di stato di autograph: prima di questi il decadimento non toccava il
+  // recupero e la salienza non esisteva (vedi scripts/lib/memory-weight.ts).
+  relevance: number | undefined;
+  salience: number | undefined;
 }
 
 // Поля фронтматтера, несущие искомый смысл структурированных карточек (контакты/проекты).
@@ -130,6 +135,8 @@ export async function loadDocs(scopeDirs: string[]): Promise<Doc[]> {
       status: (fm.status || "").toLowerCase(),
       confidence: (fm.confidence || "").toUpperCase(),
       source: fm.source || "",
+      relevance: numberField(fm.relevance),
+      salience: numberField(fm.salience),
     });
   }
   return docs;
@@ -468,6 +475,8 @@ export async function searchMemory({
       "cancelled",
       "inactive",
       "reverted",
+      // retracted = never true; it must rank BELOW superseded truth, not above it.
+      "retracted",
     ]);
     const byPath = new Map(docs.map((d) => [d.path, d]));
     const scored: Hit[] = [];
@@ -483,7 +492,13 @@ export async function searchMemory({
       // Coverage — сильный множитель (0.3..1.3): покрыл весь смысл запроса → буст, один из многих → штраф.
       const cov = 0.3 + coverage(doc.path);
       let score = s0 * cov * proximity * (1 + Math.min(incoming, 10) * 0.03);
-      if (STALE.has(doc.status)) score *= 0.3; // пессимизируем устаревшее/неактивное (findable, но ниже)
+      // Relevance (Ebbinghaus) e salienza pesano il richiamo; lo stale tiene il suo ×0.3.
+      score = memoryWeight(
+        score,
+        doc.relevance,
+        doc.salience,
+        STALE.has(doc.status),
+      );
       scored.push({
         file: doc.path,
         score: Number(score.toFixed(6)),
@@ -493,7 +508,29 @@ export async function searchMemory({
       });
     }
     scored.sort((a, b) => b.score - a.score);
+    // Il richiamo rinforza: i top-hit finiscono in coda, il doctor notturno li
+    // passa a `engine.py touch` (recupero graduato + access_count). Fire-and-forget:
+    // un fallimento qui non deve mai toccare la ricerca.
+    void appendTouchQueue(scored.slice(0, 3).map((h) => h.file));
     return { count: scored.length, engine, hits: scored.slice(0, topN) };
+  }
+}
+
+function numberField(value: string | undefined): number | undefined {
+  const n = Number.parseFloat(value ?? "");
+  return Number.isFinite(n) ? n : undefined;
+}
+
+async function appendTouchQueue(files: string[]): Promise<void> {
+  if (files.length === 0) return;
+  const dataDir = process.env.ASSISTANT_DATA_DIR ?? "data";
+  const lines = files
+    .map((file) => JSON.stringify({ file, at: Date.now() }))
+    .join("\n");
+  try {
+    await appendFile(join(dataDir, "memory-touch.jsonl"), lines + "\n", "utf8");
+  } catch {
+    // niente coda, niente dramma: il rinforzo è best-effort
   }
 }
 
