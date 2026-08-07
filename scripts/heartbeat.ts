@@ -13,6 +13,7 @@
 // Requires a running agent (eve start) plus TELEGRAM_BOT_TOKEN and
 // TELEGRAM_DIGEST_CHAT_ID. Scheduled by agent/schedules/heartbeat.ts.
 import { Client } from "eve/client";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { sendTelegramHtml } from "./lib/telegram-send.ts";
 import { loadJsonStrict, saveJsonAtomic } from "../agent/lib/json-store.ts";
@@ -34,6 +35,8 @@ interface HeartbeatState {
   lastSpokeAt?: number;
   lastMessage?: string;
   ticksSinceSpoke?: number;
+  /** Consecutive initiative messages Shy never answered. */
+  unanswered?: number;
 }
 
 if (!BOT || !CHAT) {
@@ -63,6 +66,28 @@ function hoursSince(at: number | undefined): string {
   return h < 1 ? `${Math.round(h * 60)} minuti fa` : `${Math.round(h)} ore fa`;
 }
 
+// Whether Shy has written in the chat since her last initiative message. A
+// fresh tick session cannot see the chat, so without this she cannot tell "he
+// answered and we moved on" from "he ghosted me" — and a follow-up rule is
+// unwritable. The per-chat run-status file is only touched by chat turns, and
+// a chat turn only exists when he sends a message, so its mtime is the last
+// time he was present. (chatKeyOf for a private chat is `${chatId}:`, and the
+// file name is its base64url — mirrored from agent/lib/run-status.ts.)
+function lastChatActivity(): number | null {
+  try {
+    const key = Buffer.from(`${CHAT}:`, "utf8").toString("base64url");
+    return statSync(join(DATA_DIR, "run-status.d", `${key}.json`)).mtimeMs;
+  } catch {
+    return null; // no chat yet, or unreadable — say nothing rather than guess
+  }
+}
+
+const chatAt = lastChatActivity();
+const ghosted =
+  typeof state.lastSpokeAt === "number" &&
+  chatAt !== null &&
+  chatAt < state.lastSpokeAt;
+
 const client = new Client({
   host: HOST,
   ...(BEARER ? { auth: { bearer: () => Promise.resolve(BEARER) } } : {}),
@@ -81,6 +106,15 @@ const response = await client
       state.lastMessage
         ? `L'ultima cosa che gli hai detto di tua iniziativa: «${state.lastMessage}»`
         : "Non gli hai mai scritto di tua iniziativa.",
+      ...(ghosted
+        ? [
+            `Shy NON ha più scritto in chat dopo quel messaggio ` +
+              `(ti ha lasciata senza risposta; suoi messaggi mancati di fila: ` +
+              `${state.unanswered ?? 1}).`,
+          ]
+        : state.lastSpokeAt
+          ? ["Shy ha scritto in chat dopo il tuo ultimo messaggio."]
+          : []),
       "Rispondi con PASS oppure con il solo testo del messaggio.",
       // Silence is the right answer most of the time, but a bare PASS is
       // untunable: you cannot tell good judgment from a tick that looked at
@@ -139,5 +173,12 @@ if (!sent.ok) {
   process.exit(1);
 }
 
-await persist({ lastSpokeAt: now, lastMessage: text, ticksSinceSpoke: 0 });
+await persist({
+  lastSpokeAt: now,
+  lastMessage: text,
+  ticksSinceSpoke: 0,
+  // If he never answered the previous one, this message joins the unanswered
+  // streak; if he did answer, the streak restarts at one.
+  unanswered: ghosted ? (state.unanswered ?? 1) + 1 : 1,
+});
 console.log("heartbeat: spoke");
