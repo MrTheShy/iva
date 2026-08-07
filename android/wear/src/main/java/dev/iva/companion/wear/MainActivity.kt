@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -77,6 +78,20 @@ class MainActivity : ComponentActivity() {
     private var listenOnResume = false
     private var ringOnResume = false
     private var pairStatus by mutableStateOf("")
+
+    // SCREEN_BRIGHT è deprecato ma è l'unico attrezzo che tiene lo schermo pieno
+    // CONTRO il gesto del polso: FLAG_KEEP_SCREEN_ON ferma solo il timeout, e una
+    // rotazione a metà dettatura manda in ambient e rovina il turno. Tenuto solo
+    // mentre un turno è vivo, mai in idle: la batteria paga il turno, non l'app.
+    @Suppress("DEPRECATION")
+    private val turnWakeLock by lazy {
+        (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "iva:turn",
+            )
+            .apply { setReferenceCounted(false) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -183,12 +198,21 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 val state by turns.state.collectAsState()
-                // The screen stays lit only while a turn needs eyes on it; ambient
-                // mode carries the answer through a dropped wrist.
-                val active = state is TurnState.Listening || state is TurnState.Thinking
+                val speakingNow by turns.speaking.collectAsState()
+                // Un turno vivo = schermo pieno e immune al polso, dall'ascolto fino
+                // all'ultima parola detta. In idle tutto torna normale.
+                val active = speakingNow ||
+                    state is TurnState.Listening ||
+                    state is TurnState.Thinking
                 LaunchedEffect(active) {
-                    if (active) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    if (active) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        // Guardia da 10 minuti: nessun turno legittimo dura di più.
+                        turnWakeLock.acquire(10 * 60_000L)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        if (turnWakeLock.isHeld) turnWakeLock.release()
+                    }
                 }
                 if (config.isComplete) {
                     val speaking by turns.speaking.collectAsState()
@@ -306,6 +330,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (turnWakeLock.isHeld) turnWakeLock.release()
         turns.dispose()
     }
 
