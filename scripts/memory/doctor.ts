@@ -160,6 +160,36 @@ maint("graph.health", [
 ]);
 // engine.decay updates card relevance/tiers.
 maint("engine.decay", [`${SCRIPTS}/engine.py`, "decay", "."]);
+// engine.touch — recall reinforces: memory_search queues its top hits in
+// data/memory-touch.jsonl and this consumes them (dedup, one graded touch each).
+// Best-effort by design: a bad line or a vanished card must not fail the doctor.
+function consumeTouchQueue(): void {
+  const queue = resolve(process.env.ASSISTANT_DATA_DIR ?? "data", "memory-touch.jsonl");
+  if (!existsSync(queue)) return;
+  let raw = "";
+  try {
+    raw = readFileSync(queue, "utf8");
+    writeFileSync(queue, "", "utf8");
+  } catch {
+    return;
+  }
+  const files = new Set<string>();
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      const file = (parsed as { file?: unknown }).file;
+      if (typeof file === "string" && file.endsWith(".md")) files.add(file);
+    } catch {
+      // riga malformata: si salta, la coda non è un contratto
+    }
+  }
+  for (const file of files) {
+    run("uv", ["run", `${SCRIPTS}/engine.py`, "touch", file]);
+  }
+  if (files.size > 0) console.log(`doctor: reinforced ${files.size} recalled cards`);
+}
+consumeTouchQueue();
 // moc.generate rebuilds the MOC indexes.
 maint("moc.generate", [`${SCRIPTS}/moc.py`, "generate", "."]);
 // supersede — deterministic contradiction scan (dry-run): reports same-entity cards with
