@@ -63,7 +63,8 @@ def cmd_decay(vault_dir: Path, schema: dict, dry_run: bool = False):
         except (ValueError, TypeError):
             access_count = 1
 
-        new_rel = calc_relevance(d, schema, access_count, file_type)
+        new_rel = calc_relevance(d, schema, access_count, file_type,
+                                 parse_salience(fm.get('salience')))
         new_tier = calc_tier(d, schema, fm.get('tier', ''))
 
         old_rel = fm.get('relevance', '')
@@ -139,7 +140,8 @@ def cmd_touch(filepath: str, schema: dict):
         new_date = date.today() - timedelta(days=target_days)
         fm['last_accessed'] = new_date.isoformat()
         file_type = fm.get('type', '')
-        fm['relevance'] = calc_relevance(target_days, schema, access_count, file_type)
+        fm['relevance'] = calc_relevance(target_days, schema, access_count, file_type,
+                                         parse_salience(fm.get('salience')))
         fm['tier'] = new_tier
 
     new_fm = write_frontmatter(fm, orig_lines)
@@ -149,8 +151,19 @@ def cmd_touch(filepath: str, schema: dict):
           f"relevance={fm['relevance']}, access_count={access_count}")
 
 
-def cmd_creative(n: int, vault_dir: Path, schema: dict):
-    """Random sample from cold+archive tiers for serendipitous discovery."""
+def parse_salience(value):
+    """Frontmatter salience → clamped float, or None when absent/garbage."""
+    try:
+        s = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(1.0, s))
+
+
+def cmd_creative(n: int, vault_dir: Path, schema: dict, min_salience=None):
+    """Random sample from cold+archive tiers for serendipitous discovery.
+    With min_salience, only emotionally weighty cards resurface — the heartbeat
+    uses this for reminiscence."""
     files = walk_vault(vault_dir)
     cold_archive = []
 
@@ -164,6 +177,10 @@ def cmd_creative(n: int, vault_dir: Path, schema: dict):
             continue
         tier = fm.get('tier', '')
         if tier in ('cold', 'archive'):
+            if min_salience is not None:
+                sal = parse_salience(fm.get('salience'))
+                if (0.3 if sal is None else sal) < min_salience:
+                    continue
             desc = fm.get('description', md.stem.replace('-', ' '))
             cold_archive.append((rel_path(md, vault_dir), desc, tier))
 
@@ -295,12 +312,23 @@ def main():
         cmd_touch(filepath, schema)
 
     elif cmd == 'creative':
+        min_salience = None
+        if '--min-salience' in args:
+            i = args.index('--min-salience')
+            try:
+                min_salience = float(args[i + 1])
+            except (IndexError, ValueError):
+                print("Usage: engine.py creative <N> <vault-dir> [--min-salience X]",
+                      file=sys.stderr)
+                sys.exit(1)
+            args = args[:i] + args[i + 2:]
         n = int(args[1]) if len(args) > 1 else 5
         vault_dir = Path(args[2]) if len(args) > 2 else None
         if not vault_dir:
-            print("Usage: engine.py creative <N> <vault-dir>", file=sys.stderr)
+            print("Usage: engine.py creative <N> <vault-dir> [--min-salience X]",
+                  file=sys.stderr)
             sys.exit(1)
-        cmd_creative(n, vault_dir, schema)
+        cmd_creative(n, vault_dir, schema, min_salience)
 
     elif cmd == 'stats':
         vault_dir = Path(args[1]) if len(args) > 1 else None

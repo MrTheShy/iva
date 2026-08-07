@@ -19,11 +19,11 @@ _CANONICAL_ALIASES = {
 _STATUS_ORDER = {
     'active': 0, 'prospect': 1, 'negotiation': 2, 'won': 3, 'standby': 4,
     'pending': 5, 'lost': 6, 'inactive': 7, 'done': 8, 'draft': 9,
-    'paused': 10, 'cancelled': 11, 'archived': 12,
+    'paused': 10, 'cancelled': 11, 'retracted': 11.5, 'archived': 12,
 }
 _SYSTEM_FIELDS = {
     'type', 'status', 'tags', 'description', 'title', 'date',
-    'last_accessed', 'tier', 'relevance', 'domain', 'priority',
+    'last_accessed', 'tier', 'relevance', 'salience', 'domain', 'priority',
     'created', 'updated', 'aliases',
 }
 _DOMAIN_KW = [

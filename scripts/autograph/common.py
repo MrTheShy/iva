@@ -625,9 +625,12 @@ def extract_wikilinks(text: str) -> list[tuple[str, str]]:
 
 # ─── DECAY ─────────────────────────────────────────────────
 def calc_relevance(days_since_access: int, schema: dict,
-                   access_count: int = 1, file_type: str = '') -> float:
+                   access_count: int = 1, file_type: str = '',
+                   salience=None) -> float:
     """Ebbinghaus-inspired: more retrievals = slower forgetting.
     strength = 1 + ln(access_count) → effective_rate = rate / strength
+    Emotional salience (0..1, frontmatter `salience`) slows forgetting on top of
+    the spacing effect: what weighed emotionally dies slowly. Missing → 0.3.
     """
     from math import log
     config = get_decay_config(schema)
@@ -638,7 +641,8 @@ def calc_relevance(days_since_access: int, schema: dict,
     floor = config.get('floor', 0.1)
     # Ebbinghaus spacing effect
     strength = 1.0 + log(max(access_count, 1))
-    effective_rate = rate / strength
+    sal = 0.3 if salience is None else max(0.0, min(1.0, salience))
+    effective_rate = rate / (strength * (1.0 + 2.0 * sal))
     return max(floor, round(1.0 - effective_rate * days_since_access, 3))
 
 
