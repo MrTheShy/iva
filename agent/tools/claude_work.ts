@@ -1,119 +1,131 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { loadJsonStrict, saveJsonAtomic } from "../lib/json-store.js";
 import {
-  MAX_JOBS,
-  atCapacity,
+  isSessionId,
   resolveWorkdir,
   scrubEnv,
 } from "../../scripts/lib/claude-work-guards.ts";
 
-// Launch and list Claude Code background agents.
+// A conversation with Claude Code, one project at a time.
 //
-// Claude Code already owns every deterministic piece of running a job: --bg
-// detaches it, it makes its own git worktree, `agents --json` is the registry,
-// --resume survives a restart. None of that is reimplemented here.
+// There is no daemon and no held pipe. `claude -p --resume <id>` continues the
+// same conversation with its full context, so each exchange is a short-lived
+// process and the state lives in Claude Code's own session store. Verified: a
+// number told in the first turn came back in the second. That is why nothing
+// here has to survive an iva restart — Claude's side already does.
 //
-// This tool exists for the three limits that are OURS and that a skill file
-// cannot enforce: how many may run, where they may run, and what secrets they
-// inherit. Everything else — what to ask Claude, when, what to report back —
-// stays judgment and lives in agent/skills/claude-work.md.
+// The tool exists for what is OURS and cannot be guaranteed by a skill file:
+// where a session may run, and that Iva's credentials never enter it. What to
+// say to Claude, and when, is judgment — agent/skills/claude-work.md.
 
 const run = promisify(execFile);
 
-// Owner's decision: always bypass permissions. A background job that stops on a
-// permission prompt is a dead job — we watched one sit blocked doing nothing.
-// The cost is that the worktree bounds edits, not the shell.
+// Owner's decision: permissions always bypassed. A session that stops on a
+// permission prompt is a dead session — we watched one sit blocked doing
+// nothing. `/plan` remains available inside the conversation.
 const PERMISSIONS = "--dangerously-skip-permissions";
 
-const PLAN_PREFACE =
-  "Prima analizza e proponi un piano: cosa faresti, in che ordine, e come si " +
-  "capisce che è finito. NON implementare in questo giro.\n\n";
+// A real exchange can take minutes, and Iva's turn waits for it — that is the
+// honest cost of a conversation rather than a fire-and-forget job. Long enough
+// for design work, short enough that a wedged process cannot hold a turn open
+// all day.
+const TIMEOUT_MS = 10 * 60_000;
 
-async function listAgents(): Promise<unknown[]> {
-  try {
-    const { stdout } = await run("claude", ["agents", "--json"], {
-      timeout: 20_000,
-      maxBuffer: 4_000_000,
-    });
-    const parsed: unknown = JSON.parse(stdout || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    // A registry we cannot read is not an empty registry: refuse to launch
-    // rather than assume there is room. Reported to the caller below.
-    throw new Error("non riesco a leggere `claude agents --json`");
-  }
+const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
+const SESSIONS = join(DATA_DIR, "claude-sessions.json");
+
+type SessionMap = Record<string, string>;
+
+interface ClaudeResult {
+  session_id?: unknown;
+  result?: unknown;
+  is_error?: unknown;
+  num_turns?: unknown;
 }
 
 export default defineTool({
   description:
-    "Lavori di codice come agenti Claude Code in background. action=launch avvia " +
-    "un lavoro su un progetto (serve project e task; mode='plan' chiede prima un " +
-    "piano); action=list elenca i lavori attivi con id, stato e worktree. " +
-    "Torna subito: il lavoro prosegue per conto suo.",
+    "Conversazione con Claude Code su un progetto. action=say parla con Claude " +
+    "(serve project e message): la prima volta apre la conversazione, dopo la " +
+    "riprende con tutto il contesto di prima. action=sessions elenca le " +
+    "conversazioni aperte. Claude legge il codice da sé — non riassumerglielo.",
   inputSchema: z.object({
-    action: z.enum(["launch", "list"]),
+    action: z.enum(["say", "sessions"]),
     project: z
       .string()
       .optional()
       .describe("cartella sotto work/ — solo lettere, cifre, . _ -"),
-    task: z.string().optional().describe("il compito, in una frase chiara"),
-    mode: z
-      .enum(["plan", "work"])
+    message: z.string().optional().describe("cosa dire a Claude"),
+    fresh: z
+      .boolean()
       .optional()
-      .describe("plan (default) chiede un piano prima di implementare"),
+      .describe("true per ricominciare da capo invece di riprendere"),
   }),
-  async execute({ action, project, task, mode }) {
-    if (action === "list") {
-      const agents = await listAgents();
-      return agents.length
-        ? JSON.stringify(agents, null, 2)
-        : "Nessun lavoro attivo.";
+  async execute({ action, project, message, fresh }) {
+    const map = await loadJsonStrict<SessionMap>(SESSIONS, {});
+
+    if (action === "sessions") {
+      const open = Object.entries(map);
+      return open.length
+        ? open.map(([p, id]) => `${p}: ${id}`).join("\n")
+        : "Nessuna conversazione aperta.";
     }
 
-    if (!project || !task?.trim()) {
-      return "Servono `project` e `task`.";
+    if (!project || !message?.trim()) {
+      return "Servono `project` e `message`.";
     }
 
     const dir = resolveWorkdir(project); // throws outside work/
-    const agents = await listAgents();
-    if (atCapacity(agents)) {
-      return (
-        `Ci sono già ${agents.length} lavori attivi (tetto ${MAX_JOBS}, la macchina ha ` +
-        `8 GB e zero swap). Aspetta che uno finisca — action=list per vedere quali.`
-      );
+    mkdirSync(dir, { recursive: true });
+
+    const previous = map[project];
+    const resuming = !fresh && isSessionId(previous);
+    const args = [
+      "-p",
+      message.trim(),
+      "--output-format",
+      "json",
+      PERMISSIONS,
+      ...(resuming ? ["--resume", previous] : []),
+    ];
+
+    let stdout: string;
+    try {
+      ({ stdout } = await run("claude", args, {
+        cwd: dir,
+        env: scrubEnv(),
+        timeout: TIMEOUT_MS,
+        maxBuffer: 16_000_000,
+      }));
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      // A resume that fails must not silently start a fresh conversation: that
+      // would look like Claude forgot everything, with no way to tell why.
+      return `Claude non ha risposto (${resuming ? "ripresa" : "apertura"}): ${why}`;
     }
 
-    mkdirSync(dir, { recursive: true });
-    const prompt = (mode === "work" ? "" : PLAN_PREFACE) + task.trim();
+    let parsed: ClaudeResult;
+    try {
+      parsed = JSON.parse(stdout) as ClaudeResult;
+    } catch {
+      return `Risposta non interpretabile da Claude:\n${stdout.slice(0, 2000)}`;
+    }
 
-    const child = spawn("claude", ["--bg", prompt, PERMISSIONS], {
-      cwd: dir,
-      env: scrubEnv(),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let out = "";
-    child.stdout.on("data", (c: Buffer) => (out += c.toString("utf8")));
-    child.stderr.on("data", (c: Buffer) => (out += c.toString("utf8")));
+    const id = parsed.session_id;
+    if (isSessionId(id) && map[project] !== id) {
+      await saveJsonAtomic(SESSIONS, { ...map, [project]: id });
+    }
 
-    const started = await new Promise<string>((done) => {
-      const timer = setTimeout(() => done(out || "(nessun output)"), 30_000);
-      child.on("close", () => {
-        clearTimeout(timer);
-        done(out || "(nessun output)");
-      });
-      child.on("error", (e) => {
-        clearTimeout(timer);
-        done(`errore di avvio: ${e.message}`);
-      });
-    });
-
-    // "backgrounded · 029d2e39" — the short id is what she names to Shy.
-    const id = /backgrounded[^\w]*([0-9a-f]{6,})/i.exec(started)?.[1];
-    return id
-      ? `Avviato in ${dir}\nid: ${id}\nmodo: ${mode === "work" ? "esecuzione" : "piano"}\n\n${started.trim()}`
-      : `Avvio non confermato in ${dir}:\n${started.trim()}`;
+    const text =
+      typeof parsed.result === "string" ? parsed.result : JSON.stringify(parsed);
+    const head = resuming
+      ? `[${project} · ripresa]`
+      : `[${project} · nuova conversazione]`;
+    return parsed.is_error === true ? `${head} ERRORE\n${text}` : `${head}\n${text}`;
   },
 });
