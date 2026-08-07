@@ -63,9 +63,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = Settings.load(this)
-        // serverVoice off: at the wrist the answer now, with the watch's own voice,
-        // beats the answer half a minute later with Iva's.
-        turns = TurnController(this, lifecycleScope, serverVoice = false) { config }
+        turns = TurnController(this, lifecycleScope) { config }
 
         // With ambient support the watch face does not replace the app when the wrist
         // drops: the screen only dims, the turn in flight survives, and the answer is

@@ -63,9 +63,7 @@ the voice built into the device — a companion that goes silent because a model
 is worse than one that sounds generic.
 
 Setting it up: [scripts/voice/README.md](../scripts/voice/README.md). It is optional;
-without it the apps simply use the phone's voice. The watch never asks for it: at the
-wrist an answer now, in the watch's own voice, beats an answer half a minute later in
-hers.
+without it the apps simply use the device's own voice.
 
 ## Pairing with a code
 

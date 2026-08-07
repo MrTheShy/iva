@@ -28,15 +28,10 @@ sealed interface TurnState {
  * The whole app, minus the pixels: listen, ask, speak. Phone and watch draw it
  * differently but behave identically, so the behaviour lives here once and neither
  * screen owns a copy of it.
- *
- * [serverVoice] is false on the watch: waiting up to half a minute more for Iva's
- * nicer voice is worth it on a phone, but at the wrist hearing the answer now beats
- * hearing it pretty.
  */
 class TurnController(
     context: Context,
     private val scope: CoroutineScope,
-    private val serverVoice: Boolean = true,
     private val config: () -> Config,
 ) {
     private val appContext = context.applicationContext
@@ -127,9 +122,9 @@ class TurnController(
                 is Answer.Spoken -> {
                     _state.value = TurnState.Answered(text, answer.reply)
                     buzz(BUZZ_ANSWERED)
-                    // Her voice when the server can make it, the phone's when it
+                    // Her voice when the server can make it, the device's when it
                     // cannot. Either way the answer is heard.
-                    val voice = if (serverVoice) IvaClient.speak(config(), answer.reply) else null
+                    val voice = IvaClient.speak(config(), answer.reply)
                     if (voice == null || !speaker.play(voice)) speaker.speak(answer.reply)
                 }
                 is Answer.Problem -> {

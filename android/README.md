@@ -13,8 +13,7 @@ chat stays the archive.
 
 On the watch a tap starts the microphone and it stops by itself at the end of speech;
 the tile opens the app already listening. The wrist vibrates when listening starts,
-when the answer lands, and on failure — and the watch answers with its own voice
-immediately instead of waiting for the server to synthesise Iva's.
+when the answer lands, and on failure.
 
 ## Server side
 
