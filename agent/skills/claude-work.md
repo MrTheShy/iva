@@ -8,39 +8,34 @@ Il lavoro vero sul codice lo fa Claude Code, non tu. Tu decidi **cosa** chiederg
 **quando**, e **cosa riportare a Shy**. Non gli fai da proxy sul codice: legge da
 sé, più in fretta e meglio di quanto potresti riassumergli tu.
 
-Tutto passa da `bash`. Non serve nessun tool dedicato.
+Usa il tool `claude_work`, non `bash`. Il tool impone tre limiti che una frase
+in un file non può garantire: quanti lavori insieme, dove possono girare, e che
+le chiavi di iva non finiscano nel processo.
 
 ## Lanciare un lavoro
 
-```bash
-cd ~/iva/work/<progetto> && claude --bg "<il compito, in una frase chiara>"
+```
+claude_work  action=launch  project=speedrush  task="<il compito, in una frase chiara>"
 ```
 
-Torna **subito** con un id corto (`backgrounded · 029d2e39`). Non aspettare, non
-mettere `&`, non usare `nohup`. Il processo sopravvive per conto suo.
+Torna **subito** con un id corto (`029d2e39`). Il lavoro prosegue per conto suo.
 
-- **Mai `-p` insieme a `--bg`**: la CLI rifiuta, il lavoro sarebbe inattaccabile.
-- Claude si crea **da solo** un git worktree isolato sotto `.claude/worktrees/`.
-  Non preparargliene uno: lavora lì, il repo principale non lo tocca.
-- Il compito è il posizionale. Scrivilo come lo diresti a un collega: cosa deve
-  ottenere e come si capisce che è finito. Non incollargli il codice.
+- `mode=plan` è il default: Claude analizza e propone, senza implementare.
+  `mode=work` per eseguire. Un compito grosso o poco chiaro parte **sempre** in
+  `plan` — un piano sbagliato costa un minuto, un'esecuzione sbagliata la giornata.
+- Claude si crea **da solo** un git worktree isolato. Non preparargliene uno.
+- Il compito è testo per un collega: cosa deve ottenere e come si capisce che è
+  finito. Non incollargli il codice.
 
-**Modalità permessi.** Senza indicazioni si blocca alla prima richiesta e resta lì.
-Scegli in base a quanto è reversibile il lavoro:
-
-| | |
-|---|---|
-| `--permission-mode plan` | solo legge e propone un piano. **Default per un compito nuovo.** |
-| `--permission-mode acceptEdits` | scrive file nel suo worktree senza chiedere |
-
-Un compito grosso o poco chiaro parte **sempre** in `plan`: il piano torna a Shy,
-lui approva, e solo allora rilanci in `acceptEdits`. Un piano sbagliato costa un
-minuto; un'esecuzione sbagliata costa la sua giornata.
+Nota su `mode=plan`: è un'istruzione nel prompt, non un blocco tecnico. Claude
+gira con i permessi bypassati (scelta di Shy: un lavoro che si ferma su un
+prompt di permesso è un lavoro morto). Se il compito è ambiguo, la difesa è
+scriverlo meglio, non la modalità.
 
 ## Vedere come vanno
 
-```bash
-claude agents --json
+```
+claude_work  action=list
 ```
 
 Array JSON, uno per sessione. I campi che contano:
@@ -60,9 +55,9 @@ anche quelle concluse.
 
 ## Quante alla volta
 
-**Due, massimo.** La macchina ha 8 GB e zero swap: tre Claude più il server di iva
-la mandano in OOM, e in OOM muore anche tu. Prima di lanciarne uno nuovo conta
-quelli attivi con `agents --json`.
+**Due, massimo** — e non devi contarli tu: il tool rifiuta il terzo. La macchina
+ha 8 GB e zero swap, in OOM muori anche tu. Se ricevi il rifiuto, dillo a Shy
+invece di riprovare.
 
 ## Cosa riportare a Shy
 
@@ -77,8 +72,9 @@ quelli attivi con `agents --json`.
 ## Cosa NON fare
 
 - Non spiegargli il codice: lo legge lui.
-- Non lanciarlo dal repo principale — il worktree è il punto.
+- Non lanciarlo a mano con `bash`: salteresti i tre limiti, che esistono perché
+  un OOM o una chiave che esce non li vede nessuno finché non è tardi.
 - Non tenere aperta una shell in attesa che finisca: blocca il tuo turno e Shy
   resta senza risposta.
-- Non lanciare lo stesso compito due volte perché «sembrava fermo»: guarda
-  `agents --json` prima.
+- Non lanciare lo stesso compito due volte perché «sembrava fermo»: `action=list`
+  prima.
