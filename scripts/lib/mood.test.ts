@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-floating-promises -- Node's test runner owns registrations. */
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -81,6 +82,15 @@ test("absence raises curiosity only past 12 hours, capped at 85", () => {
   assert.equal(applyAbsence(mood, 12, NOW), mood);
   assert.equal(applyAbsence(mood, 22, NOW).curiosita, 70);
   assert.equal(applyAbsence(mood, 400, NOW).curiosita, 85);
+});
+
+test("absence is an absolute curve: re-applying the same silence does not compound", () => {
+  // The heartbeat calls this every 15 minutes with the same hours-of-silence; a
+  // += implementation saturated curiosity at 85 within a couple of hours.
+  const mood = defaultMood(0);
+  const once = applyAbsence(mood, 22, NOW);
+  const twice = applyAbsence(once, 22, NOW);
+  assert.equal(twice.curiosita, once.curiosita);
 });
 
 test("a cold relationship does not accumulate abandonment anxiety", () => {

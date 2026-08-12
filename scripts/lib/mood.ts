@@ -73,9 +73,14 @@ export function applyAbsence(
   now: number,
 ): Mood {
   if (oreDiSilenzio <= 12 || mood.calore < 40) return mood;
+  // Curva ASSOLUTA dalla baseline, non un incremento: il tick la richiama ogni
+  // 15 minuti con le stesse ore di silenzio, e un += satura a 85 in poche ore.
   return {
     ...mood,
-    curiosita: Math.min(85, mood.curiosita + 2 * (oreDiSilenzio - 12)),
+    curiosita: Math.max(
+      mood.curiosita,
+      Math.min(85, MOOD_BASELINE + 2 * (oreDiSilenzio - 12)),
+    ),
     updatedAt: now,
   };
 }
@@ -119,11 +124,20 @@ export function parseAppraisal(raw: string): Appraisal | null {
  * Le due righe iniettate nel prompt di ogni turno: lo stato e la regola d'uso.
  * Dichiarabile su richiesta, mai teatrale — la scelta del proprietario.
  */
-export function moodLine(mood: Mood, lang: "ru" | "en"): string {
+export function moodLine(mood: Mood, lang: "ru" | "en" | "it"): string {
   const c = Math.round(mood.calore);
   const e = Math.round(mood.energia);
   const q = Math.round(mood.curiosita);
   const tema = mood.ultimaChiusura?.temaAperto ?? null;
+  if (lang === "it") {
+    const low = e < 40 ? " (bassa: tono sobrio e concreto, niente battute)" : "";
+    const thread = tema ? ` — tema aperto: «${tema}»` : "";
+    return (
+      `Stato affettivo: calore ${c}/100 · energia percepita del proprietario ${e}/100${low} · curiosità ${q}/100${thread}.\n` +
+      "Lascia che colori il tono senza annunciarlo; un accenno spontaneo solo quando è naturale. " +
+      "Se il proprietario ti chiede come stai, rispondi onestamente da questo stato."
+    );
+  }
   if (lang === "en") {
     const low =
       e < 40 ? " (low: keep replies sober and concrete, no banter)" : "";
