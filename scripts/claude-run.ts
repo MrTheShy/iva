@@ -60,6 +60,10 @@ if (!BOT || !CHAT) {
   console.error("TELEGRAM_BOT_TOKEN e TELEGRAM_DIGEST_CHAT_ID obbligatori");
   process.exit(1);
 }
+// Narrowed for the closures below: `process.exit` above makes these string here, but
+// TS widens a module const back to string|undefined inside a nested function.
+const bot: string = BOT;
+const chat: string = CHAT;
 
 // Implementation work takes real time; nothing waits on this process, so the
 // budget is generous. The transient unit has RuntimeMaxSec above it as the
@@ -83,7 +87,7 @@ async function mutateSessions(
 }
 
 async function notify(md: string): Promise<void> {
-  const r = await sendTelegramHtml(BOT, CHAT, md);
+  const r = await sendTelegramHtml(bot, chat, md);
   if (!r.ok) console.error("claude-run: invio Telegram fallito:", r.error);
 }
 
