@@ -222,6 +222,15 @@ export default defineTool({
       .describe(
         "EXTRACTED — прямо сказано; INFERRED — выведено; по умолчанию EXTRACTED",
       ),
+    salience: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe(
+        "Эмоциональный вес 0..1: 0.8+ — событие с сильной эмоцией, 0.5 — обычный факт, " +
+          "0.2 — рутина. Замедляет забывание и питает reminiscence (heartbeat).",
+      ),
     replace_body: z
       .boolean()
       .optional()
@@ -245,6 +254,7 @@ export default defineTool({
     history_entry,
     retract_reason,
     confidence,
+    salience,
     replace_body,
   }) {
     // Валидация статуса против схемы типа (жёстко — иначе модель придумает статус).
@@ -399,6 +409,9 @@ export default defineTool({
           status: st,
           confidence: confidence || "EXTRACTED",
           ...(domain ? { domain } : {}),
+          // FmValue è string|string[]: il numero va serializzato qui; engine.py
+          // e memory_search lo riparsano come float.
+          ...(salience !== undefined ? { salience: String(salience) } : {}),
         },
         initialFields: { created: today(), source: `daily/${today()}.md` },
         body,
