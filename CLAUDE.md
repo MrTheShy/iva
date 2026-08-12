@@ -28,3 +28,18 @@ Guidance for Claude Code working in this repository.
 Секция «What's New / Что нового» в README.md и README.ru.md хранит ТОЛЬКО три последние даты
 правок. Добавляя новую дату — удали самую старую, чтобы дат осталось ровно три. Полная история
 живёт в CHANGELOG.md (ссылка в конце секции), дублировать её в README не нужно.
+
+## 🚀 Deploy — only via commit → push → gated deploy
+
+Shipping to the live VPS goes **only** through git: edit locally → commit → push
+`origin/retract` → gated deploy on the VM. The full safe procedure lives in the
+**local `deploy` skill** (`.claude/skills/deploy/SKILL.md`, gitignored because it
+holds this fork's VPS specifics). **Invoke that skill before any deploy** — it
+records a rollback point, previews which commits go live, gates the restart on
+typecheck + build passing, and verifies with a real turn.
+
+Iron rules (the skill enforces them): **never edit the VM working tree by hand** —
+`git reset --hard` in the deploy erases such edits without a trace; and a code
+deploy **never** touches `vault/`, `data/`, or `.env` (personal data; the vault has
+no remote backup). A model/config change is a VM `.env` edit + restart, not a code
+deploy.
