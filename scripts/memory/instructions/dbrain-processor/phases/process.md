@@ -23,8 +23,13 @@ For each item:
    - Match, new fact contradicts current truth → **SUPERSEDE**. Pass the complete
      new Compiled Truth in `body` and the displaced old fact in `history_entry`.
      The tool rewrites current truth and preserves one append-only `## History`.
-     See `references/classification.md` → "ADD / UPDATE / SUPERSEDE / NOOP".
+     See `references/classification.md` → "ADD / UPDATE / SUPERSEDE / RETRACT / NOOP".
      Never use `UPDATE` to hide a contradiction in chronology.
+   - Match, but the current value was **never true** (misheard / mis-inferred) →
+     **RETRACT**. Pass the corrected Compiled Truth in `body` and the one-line reason
+     in `retract_reason`. The tool flips `status: retracted` and files the reason under
+     `## Retracted` — NOT `## History`, so the falsehood is never read back as a past
+     fact. Do not SUPERSEDE a value that was never true.
    - Tag each written card with `confidence: EXTRACTED|INFERRED` (see
      classification.md → "Confidence").
 2. **Path & filename.** Place by type (see SKILL layout table). Filenames are

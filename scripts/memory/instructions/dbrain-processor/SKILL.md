@@ -55,7 +55,7 @@ Always pick `type` and `status` from `schema.json` → `node_types`. Never inven
 1. **CAPTURE** (`phases/capture.md`) — read the transcript, segment it, and decide
    what is noteworthy: which entities, decisions, ideas, and topics the day produced.
 2. **PROCESS** (`phases/process.md`) — create / update cards for the noteworthy items,
-   choosing exactly one `ADD | UPDATE | SUPERSEDE | NOOP` operation, then type +
+   choosing exactly one `ADD | UPDATE | SUPERSEDE | RETRACT | NOOP` operation, then type +
    description-snippet + tags + status; dedup against existing cards.
 3. **LINK** (`phases/link.md`) — wire every new card to its domain hub + 2–3 neighbors.
 4. **SUMMARIZE** (`phases/summarize.md`) — write the daily-summary card: the day's

@@ -361,13 +361,24 @@ function collapseLogSections(body: string): string {
   return replaceH2Sections(body, "Log", sectionContent(body, "Log"));
 }
 
+const STRUCTURAL_HEADINGS: Record<string, string> = {
+  log: "Log",
+  history: "History",
+  related: "Related",
+  retracted: "Retracted",
+};
+
 function replaceCompiledTruth(
   oldBody: string,
   replacement: string,
   historyEntry: string | undefined,
   date: string,
+  retractedEntry?: string,
 ): string {
-  const structural = new Set(["log", "history", "related"]);
+  // "retracted" is structural: a ## Retracted archive is append-only like ## History,
+  // so a replacement body naming it can't wipe prior retraction records (they are
+  // load-bearing — a card with several is telling you its source is unreliable).
+  const structural = new Set(["log", "history", "related", "retracted"]);
   const oldLines = oldBody.split("\n");
   const replacementLines = replacement.split("\n");
   const oldSections = namedH2Sections(oldLines);
@@ -458,12 +469,26 @@ function replaceCompiledTruth(
       ]);
     }
   }
-  if (historyEntry?.trim()) {
-    const entry = historyEntry.trim();
-    const dated = /^[-*]\s+\d{4}-\d{2}-\d{2}:/.test(entry)
+  const dateEntry = (raw: string): string => {
+    const entry = raw.trim();
+    return /^[-*]\s+\d{4}-\d{2}-\d{2}:/.test(entry)
       ? entry
       : `- ${date}: ${entry.replace(/^[-*]\s+/, "")}`;
-    additions.set("history", [...(additions.get("history") ?? []), dated]);
+  };
+  if (historyEntry?.trim()) {
+    additions.set("history", [
+      ...(additions.get("history") ?? []),
+      dateEntry(historyEntry),
+    ]);
+  }
+  // RETRACT records the removal here, NOT in ## History: History is the subject's
+  // past truths, and a never-true value filed there is read back as fact by the
+  // next rollup. ## Retracted keeps it visible without lying about the past.
+  if (retractedEntry?.trim()) {
+    additions.set("retracted", [
+      ...(additions.get("retracted") ?? []),
+      dateEntry(retractedEntry),
+    ]);
   }
 
   for (const [key, lines] of additions) {
@@ -471,8 +496,7 @@ function replaceCompiledTruth(
       .reverse()
       .find((candidate) => candidate.key === key);
     if (!block) {
-      const heading =
-        key === "history" ? "History" : key === "log" ? "Log" : "Related";
+      const heading = STRUCTURAL_HEADINGS[key] ?? "Related";
       block = { key, heading, lines: [`## ${heading}`] };
       blocks.push(block);
     }
@@ -489,7 +513,7 @@ function replaceCompiledTruth(
   return output.join("\n").replace(/\s+$/, "") + "\n";
 }
 
-export type CardOperation = "ADD" | "UPDATE" | "SUPERSEDE" | "NOOP";
+export type CardOperation = "ADD" | "UPDATE" | "SUPERSEDE" | "RETRACT" | "NOOP";
 
 export interface MergeInput {
   /** Содержимое существующего файла (undefined — карточки ещё нет). */
@@ -508,11 +532,13 @@ export interface MergeInput {
   operation?: CardOperation;
   /** One dated fact moved out of Compiled Truth during SUPERSEDE. */
   historyEntry?: string;
+  /** RETRACT: dated reason the removed value was never true, filed under ## Retracted. */
+  retractedEntry?: string;
 }
 
 export interface MergeResult {
   content: string;
-  action: "created" | "updated" | "merged" | "replaced" | "noop";
+  action: "created" | "updated" | "merged" | "replaced" | "retracted" | "noop";
 }
 
 export function mergeCard(input: MergeInput): MergeResult {
@@ -526,19 +552,24 @@ export function mergeCard(input: MergeInput): MergeResult {
     date,
     replaceBody,
     historyEntry,
+    retractedEntry,
   } = input;
   const trimmedBody = body.trim();
   const operation =
     input.operation ??
     (replaceBody ? "SUPERSEDE" : existing === undefined ? "ADD" : "UPDATE");
+  // RETRACT rewrites Compiled Truth like SUPERSEDE; the difference is where the
+  // displaced value is filed (## Retracted, not ## History) and that status flips
+  // to `retracted`. Both replace the body wholesale.
+  const rewritesTruth = operation === "SUPERSEDE" || operation === "RETRACT";
 
   if (h2Sections(trimmedBody.split("\n"), "Related").length) {
     throw new Error(
       "body must not contain ## Related; pass links through related",
     );
   }
-  if (replaceBody && operation !== "SUPERSEDE") {
-    throw new Error("replaceBody is valid only for SUPERSEDE");
+  if (replaceBody && !rewritesTruth) {
+    throw new Error("replaceBody is valid only for SUPERSEDE or RETRACT");
   }
   if (historyEntry && /[\r\n]/.test(historyEntry)) {
     throw new Error("historyEntry must be a single line");
@@ -555,10 +586,7 @@ export function mergeCard(input: MergeInput): MergeResult {
   if (operation === "ADD" && existing !== undefined) {
     throw new Error("ADD refuses to overwrite an existing card");
   }
-  if (
-    (operation === "UPDATE" || operation === "SUPERSEDE") &&
-    existing === undefined
-  ) {
+  if ((operation === "UPDATE" || rewritesTruth) && existing === undefined) {
     throw new Error(`${operation} requires an existing card`);
   }
 
@@ -610,8 +638,14 @@ export function mergeCard(input: MergeInput): MergeResult {
 
   let newBody = operation === "UPDATE" ? collapseLogSections(oldBody) : oldBody;
   let appended = false;
-  if (operation === "SUPERSEDE") {
-    newBody = `\n${replaceCompiledTruth(oldBody, trimmedBody, historyEntry, date).trim()}\n`;
+  if (rewritesTruth) {
+    newBody = `\n${replaceCompiledTruth(
+      oldBody,
+      trimmedBody,
+      operation === "SUPERSEDE" ? historyEntry : undefined,
+      date,
+      operation === "RETRACT" ? retractedEntry : undefined,
+    ).trim()}\n`;
   } else if (!bodyContains(oldBody, trimmedBody)) {
     newBody = appendLog(newBody, trimmedBody, date);
     appended = true;
@@ -626,7 +660,13 @@ export function mergeCard(input: MergeInput): MergeResult {
   return {
     content,
     action:
-      operation === "SUPERSEDE" ? "replaced" : appended ? "merged" : "updated",
+      operation === "RETRACT"
+        ? "retracted"
+        : operation === "SUPERSEDE"
+          ? "replaced"
+          : appended
+            ? "merged"
+            : "updated",
   };
 }
 

@@ -47,7 +47,9 @@ def scan(vault_dir: Path, schema: dict):
                 continue
             fields = fields or {}  # notes may lack frontmatter
             # Already-resolved cards must not re-surface as live conflicts every night.
-            if str(fields.get("status", "")).lower() == "superseded":
+            # retracted too: a never-true value is the newest by recency and would
+            # otherwise be scanned as "current", superseding the real card.
+            if str(fields.get("status", "")).lower() in ("superseded", "retracted"):
                 continue
             cards.append({"path": rp, "fields": fields})
         if len(cards) < 2:

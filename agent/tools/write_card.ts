@@ -140,18 +140,21 @@ function today(): string {
 export default defineTool({
   description:
     "Создать или обновить типизированную карточку памяти в vault. Явно выбери " +
-    "ADD, UPDATE, SUPERSEDE или NOOP; без operation старые вызовы определяются автоматически. " +
+    "ADD, UPDATE, SUPERSEDE, RETRACT или NOOP; без operation старые вызовы определяются автоматически. " +
     "Используй ЭТО (не write_file) " +
     "для карточек — гарантирует валидный тип и схему. type строго один из: " +
     Object.keys(CARD_TYPE_DIR).join(", ") +
     ". Поля вне схемы недопустимы. Summary (день/неделя/…) НЕ создавай — их пишет ночной rollup.",
   inputSchema: z.object({
     operation: z
-      .enum(["ADD", "UPDATE", "SUPERSEDE", "NOOP"])
+      .enum(["ADD", "UPDATE", "SUPERSEDE", "RETRACT", "NOOP"])
       .optional()
       .describe(
         "ADD создаёт новую карточку; UPDATE добавляет непротиворечивый факт в ## Log; " +
-          "SUPERSEDE заменяет текущую истину; NOOP ничего не пишет.",
+          "SUPERSEDE заменяет истину (прежнее значение было верным — уходит в ## History); " +
+          "RETRACT отзывает значение, которое НИКОГДА не было верным (ослышка/ошибочный вывод) — " +
+          "исправляет тело, ставит status: retracted и пишет причину в ## Retracted, НЕ в ## History; " +
+          "NOOP ничего не пишет.",
       ),
     type: z
       .preprocess(normalizeType, z.enum(CARD_TYPES))
@@ -202,6 +205,17 @@ export default defineTool({
       .describe(
         "Для SUPERSEDE: датированная строка о прежней истине, переносимая в ## History",
       ),
+    retract_reason: z
+      .string()
+      .min(1)
+      .refine(
+        (value) => !/[\r\n]/.test(value),
+        "retract_reason должен быть одной строкой",
+      )
+      .optional()
+      .describe(
+        "Для RETRACT: одна строка — почему значение НИКОГДА не было верным (пишется в ## Retracted)",
+      ),
     confidence: z
       .enum(["EXTRACTED", "INFERRED", "AMBIGUOUS"])
       .optional()
@@ -212,8 +226,9 @@ export default defineTool({
       .boolean()
       .optional()
       .describe(
-        "ТОЛЬКО для SUPERSEDE: заменить body целиком (сам перенеси старое значение в ## History). " +
-          "Без флага body дописывается, противоречащие факты так не исправить.",
+        "Легаси-флаг. Явный SUPERSEDE и так заменяет body целиком (старое значение " +
+          "сам перенеси в ## History); флаг нужен лишь без operation — тогда он выбирает " +
+          "SUPERSEDE вместо UPDATE.",
       ),
   }),
   // eslint-disable-next-line @typescript-eslint/require-await -- Preserve the established Promise-returning Eve tool contract.
@@ -228,17 +243,30 @@ export default defineTool({
     related,
     body,
     history_entry,
+    retract_reason,
     confidence,
     replace_body,
   }) {
     // Валидация статуса против схемы типа (жёстко — иначе модель придумает статус).
     const allowed = SCHEMA.status[type] || ["active"];
-    const st = status && allowed.includes(status) ? status : allowed[0];
     if (status && !allowed.includes(status)) {
       return {
         ok: false,
         error: `Недопустимый status "${status}" для type "${type}". Разрешены: ${allowed.join(", ")}.`,
       };
+    }
+    // RETRACT всегда ставит status: retracted — сам смысл операции в том, что источник
+    // ненадёжен. Если тип его не поддерживает (не должно случаться — он есть у всех пяти),
+    // это ошибка схемы, а не молчаливый апгрейд до active.
+    let st = status && allowed.includes(status) ? status : allowed[0];
+    if (operation === "RETRACT") {
+      if (!allowed.includes("retracted")) {
+        return {
+          ok: false,
+          error: `type "${type}" не поддерживает status retracted (проверь schema.json).`,
+        };
+      }
+      st = "retracted";
     }
 
     const dir = join(VAULT(), "cards", CARD_TYPE_DIR[type]);
@@ -300,6 +328,19 @@ export default defineTool({
         error: "SUPERSEDE требует history_entry с прежней истиной.",
       };
     }
+    if (retract_reason && operation !== "RETRACT") {
+      return {
+        ok: false,
+        error: "retract_reason допустим только для RETRACT.",
+      };
+    }
+    if (operation === "RETRACT" && !retract_reason) {
+      return {
+        ok: false,
+        error:
+          "RETRACT требует retract_reason — одну строку, почему значение никогда не было верным.",
+      };
+    }
 
     mkdirSync(dir, { recursive: true });
 
@@ -327,7 +368,8 @@ export default defineTool({
       }
       if (
         (effectiveOperation === "UPDATE" ||
-          effectiveOperation === "SUPERSEDE") &&
+          effectiveOperation === "SUPERSEDE" ||
+          effectiveOperation === "RETRACT") &&
         existing === undefined
       ) {
         return {
@@ -365,6 +407,7 @@ export default defineTool({
         replaceBody: replace_body === true,
         operation: effectiveOperation,
         historyEntry: history_entry,
+        retractedEntry: retract_reason,
       });
       if (action !== "noop") atomicWrite(file, content);
       return {

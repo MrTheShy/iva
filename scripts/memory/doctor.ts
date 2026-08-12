@@ -133,6 +133,66 @@ const SCHEMA = existsSync(VAULT_SCHEMA)
     ? LEGACY_SCHEMA
     : resolve(SCRIPTS, "schema.example.json");
 
+// One-time additive upgrade: vault schemas written before RETRACT lack the `retracted`
+// status, so enforce.py below would remap a retracted card to its type's first status
+// (active) — resurrecting a value that was never true. Adding the enum value never
+// invalidates existing data and is idempotent, so it is safe to run every night.
+function ensureRetractedStatus(schemaFile: string): void {
+  if (!existsSync(schemaFile)) return;
+  try {
+    const parsed = JSON.parse(readFileSync(schemaFile, "utf8")) as {
+      node_types?: Record<string, Record<string, unknown>>;
+      status_order?: Record<string, unknown>;
+    };
+    let changed = false;
+    for (const node of Object.values(parsed.node_types ?? {})) {
+      const key = Array.isArray(node.status)
+        ? "status"
+        : Array.isArray(node.statuses)
+          ? "statuses"
+          : null;
+      if (!key) continue;
+      const list = node[key] as string[];
+      if (!list.includes("retracted")) {
+        list.push("retracted");
+        changed = true;
+      }
+    }
+    const order = parsed.status_order;
+    if (order && !("retracted" in order)) {
+      const archived =
+        typeof order.archived === "number" ? order.archived : undefined;
+      const superseded =
+        typeof order.superseded === "number" ? order.superseded : undefined;
+      const nums = Object.values(order).filter(
+        (v): v is number => typeof v === "number",
+      );
+      order.retracted =
+        archived !== undefined
+          ? archived - 0.5 // more visible than archived, as the template intends
+          : superseded !== undefined
+            ? superseded + 0.5
+            : nums.length
+              ? Math.max(...nums) + 1
+              : 9.5;
+      changed = true;
+    }
+    if (changed) {
+      writeFileSync(schemaFile, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+      console.log(
+        `doctor: schema upgraded with 'retracted' status: ${schemaFile}`,
+      );
+    }
+  } catch (error) {
+    console.error(
+      `doctor: could not add 'retracted' to schema: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+ensureRetractedStatus(VAULT_SCHEMA);
+
 // ── 1. Mechanical maintenance (autograph, no LLM) ──
 // Do NOT ignore failures: otherwise doctor would commit/push and exit 0 even though health/
 // decay/moc did not run (no uv/Python, vault not initialized, etc.).

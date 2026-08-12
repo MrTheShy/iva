@@ -5,17 +5,24 @@
     "note": {
       "description": "Knowledge note, article, thought",
       "required": ["description", "tags"],
-      "status": ["active", "draft", "archived", "superseded"]
+      "status": ["active", "draft", "archived", "superseded", "retracted"]
     },
     "contact": {
       "description": "Person",
       "required": ["description", "tags", "status"],
-      "status": ["active", "inactive", "superseded"]
+      "status": ["active", "inactive", "superseded", "retracted"]
     },
     "project": {
       "description": "Project with deliverables",
       "required": ["description", "tags", "status"],
-      "status": ["active", "done", "paused", "cancelled", "superseded"]
+      "status": [
+        "active",
+        "done",
+        "paused",
+        "cancelled",
+        "superseded",
+        "retracted"
+      ]
     }
   },
 
@@ -50,7 +57,8 @@
     "draft": 9,
     "paused": 10,
     "cancelled": 11,
-    "superseded": 12
+    "superseded": 12,
+    "retracted": 12.5
   },
 
   "status_defaults": {
