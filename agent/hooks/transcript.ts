@@ -43,6 +43,9 @@ export default defineHook({
       if (event.data.finishReason === "tool-calls") return;
       const text = (event.data.message ?? "").trim();
       if (!text) return;
+      // Il PASS del heartbeat non è una battuta di Iva: ~60 righe al giorno nel
+      // daily inquinano il rollup e affogano l'appraisal. Stessa regex del tick.
+      if (/^pass\b/i.test(text)) return;
       appendDaily("[iva]", text);
     },
   },
