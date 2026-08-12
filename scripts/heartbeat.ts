@@ -249,13 +249,14 @@ if (result.status === "failed" || !result.message) {
 
 const text = result.message.trim();
 
-// Exact match on a real tick. A model that wraps PASS in a sentence has decided
-// to talk, and the visible failure (one message too many) beats the invisible
-// one. A dry run also accepts a leading PASS, because it asked for the reasoning
-// that follows — that relaxation must never apply when a send is possible.
-const passed = DRY ? /^PASS\b/.test(text) : text === "PASS";
+// Treat any reply that OPENS with the word PASS as "nothing to say" — regardless of
+// case or trailing punctuation ("PASS.", "pass", "PASS — …"). The model does not always
+// answer the exact token, and an exact-match check let those variants through: a bare
+// PASS reaching the chat is the noise Shy sees. A real Italian initiative message never
+// starts with the English word PASS, so this is safe.
+const passed = /^pass\b/i.test(text);
 if (passed) {
-  const why = DRY ? text.replace(/^PASS\b[:.\s-]*/, "").trim() : "";
+  const why = DRY ? text.replace(/^pass\b[\s.!,:;—–-]*/i, "").trim() : "";
   console.log("heartbeat: PASS — niente da dire");
   if (why) console.log(`\nperché:\n${why}`);
   await persist({ ticksSinceSpoke: (state.ticksSinceSpoke ?? 0) + 1 });
