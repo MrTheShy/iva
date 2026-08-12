@@ -28,7 +28,18 @@ const IGNORE_DIRS = new Set([
   ".index",
   ".trash",
 ]);
-const DEFAULT_DIRS = ["cards", "summaries", "weekly", "monthly", "yearly"];
+// library: i documenti importati dalla skill `documents` erano invisibili al
+// protocollo di richiamo standard. daily: chiude il buco di ~28h fra un fatto
+// detto oggi e il rollup di domani notte (prima esisteva solo nel contesto).
+const DEFAULT_DIRS = [
+  "cards",
+  "summaries",
+  "weekly",
+  "monthly",
+  "yearly",
+  "library",
+  "daily",
+];
 const MAX_SNIPPET = 240;
 
 interface Doc {
@@ -374,10 +385,13 @@ export async function searchMemory({
   query,
   limit,
   scope,
+  touch = true,
 }: {
   query: string;
   limit?: number;
   scope?: string[];
+  /** false = niente coda di rinforzo (richiamo automatico pre-turno: toccherebbe carte a caso a ogni messaggio). */
+  touch?: boolean;
 }): Promise<{ count: number; engine?: string; hits: Hit[]; note?: string }> {
   {
     const topN = limit ?? 12;
@@ -511,7 +525,7 @@ export async function searchMemory({
     // Il richiamo rinforza: i top-hit finiscono in coda, il doctor notturno li
     // passa a `engine.py touch` (recupero graduato + access_count). Fire-and-forget:
     // un fallimento qui non deve mai toccare la ricerca.
-    void appendTouchQueue(scored.slice(0, 3).map((h) => h.file));
+    if (touch) void appendTouchQueue(scored.slice(0, 3).map((h) => h.file));
     return { count: scored.length, engine, hits: scored.slice(0, topN) };
   }
 }
