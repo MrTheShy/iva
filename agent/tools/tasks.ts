@@ -22,6 +22,10 @@ interface Task {
   due: string | null;
   done: boolean;
   createdAt: string;
+  /** ISO 8601 с офсетом: agent/schedules/reminders.ts доставит ⏰ в эту минуту. */
+  remindAt?: string | null;
+  /** Ставит планировщик после доставки — напоминание звучит один раз. */
+  remindedAt?: string | null;
 }
 
 // Нет файла → []. Битый JSON — НЕ пустой список: loadJsonStrict откладывает бэкап и
@@ -33,7 +37,8 @@ export default defineTool({
   description:
     "Управление списком задач пользователя. action=add добавляет задачу (нужен text); " +
     "list показывает задачи (по умолчанию незавершённые); done отмечает задачу выполненной (нужен id); " +
-    "remove удаляет задачу (нужен id).",
+    "remove удаляет задачу (нужен id). Разовое напоминание «напомни в …» — это add с remindAt: " +
+    "планировщик сам пришлёт ⏰ в чат в эту минуту (переживает рестарты).",
   inputSchema: z.object({
     action: z.enum(["add", "list", "done", "remove"]),
     text: z
@@ -55,12 +60,19 @@ export default defineTool({
       .string()
       .optional()
       .describe("Срок в свободной форме или ISO-дата (для add)"),
+    remindAt: z
+      .string()
+      .optional()
+      .describe(
+        "Для add: момент напоминания, ISO 8601 С ОФСЕТОМ (напр. 2026-08-12T18:30:00+02:00; " +
+          "текущий часовой пояс видишь в промпте). В эту минуту в чат придёт ⏰ с текстом задачи.",
+      ),
     includeDone: z
       .boolean()
       .optional()
       .describe("Показать и выполненные (для list)"),
   }),
-  async execute({ action, text, id, priority, due, includeDone }) {
+  async execute({ action, text, id, priority, due, remindAt, includeDone }) {
     // Мутации — под локом: параллельный ход (расписание + живой чат) на голом
     // load→mutate→save терял записи и дублировал id (id = max+1 от своей копии).
     let lockToken: string | null = null;
@@ -75,7 +87,7 @@ export default defineTool({
       }
     }
     try {
-      return await run({ action, text, id, priority, due, includeDone });
+      return await run({ action, text, id, priority, due, remindAt, includeDone });
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     } finally {
@@ -90,15 +102,22 @@ type Args = {
   id?: number;
   priority?: Priority;
   due?: string;
+  remindAt?: string;
   includeDone?: boolean;
 };
 
-async function run({ action, text, id, priority, due, includeDone }: Args) {
+async function run({ action, text, id, priority, due, remindAt, includeDone }: Args) {
   const tasks = await load();
 
   switch (action) {
     case "add": {
       if (!text) return { ok: false, error: "Для add нужен text" };
+      if (remindAt !== undefined && !Number.isFinite(Date.parse(remindAt))) {
+        return {
+          ok: false,
+          error: `remindAt "${remindAt}" не парсится: нужен ISO 8601 с офсетом, напр. 2026-08-12T18:30:00+02:00`,
+        };
+      }
       const nextId = tasks.reduce((m, t) => Math.max(m, t.id), 0) + 1;
       const task: Task = {
         id: nextId,
@@ -107,6 +126,7 @@ async function run({ action, text, id, priority, due, includeDone }: Args) {
         due: due ?? null,
         done: false,
         createdAt: new Date().toISOString(),
+        ...(remindAt !== undefined ? { remindAt } : {}),
       };
       tasks.push(task);
       await save(tasks);
