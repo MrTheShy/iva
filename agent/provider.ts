@@ -31,7 +31,10 @@ const PROVIDERS = {
     // Ollama Cloud снимает теги с раздачи: gemma3:12b отвечает 410 "retired at 2026-07-15" —
     // заменён на gemma4:31b (проверено 2026-07-28). Текстовые модели (deepseek, glm, gpt-oss)
     // отдают 400 "does not support image input", так что подменять vision на них нельзя.
-    visionModel: "gemma4:31b",
+    // Переопределяемо: OLLAMA_BASE_URL может смотреть на любой OpenAI-совместимый
+    // бэкенд (например DeepSeek), где gemma4:31b не существует — тогда зрение
+    // задаётся явно (или отключается пустым значением).
+    visionModel: process.env.OLLAMA_VISION_MODEL ?? "gemma4:31b",
   },
   opencode: {
     // Продукт переименован Zen → Go, но API живёт на легаси-пути /zen/ (у /go/v1 — 404).
