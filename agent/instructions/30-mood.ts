@@ -24,11 +24,13 @@ function readJson(file: string): Record<string, unknown> | null {
 
 // Lingua come in now.ts: settings.language → env → ru. Duplicata inline apposta,
 // le istruzioni restano autosufficienti.
-function resolveLang(): "ru" | "en" {
+function resolveLang(): "ru" | "en" | "it" {
   const settings = readJson(join(DATA_DIR, "settings.json"));
   const language = settings?.language;
-  if (language === "ru" || language === "en") return language;
-  return process.env.AGENT_LANGUAGE === "en" ? "en" : "ru";
+  if (language === "ru" || language === "en" || language === "it")
+    return language;
+  const env = process.env.AGENT_LANGUAGE;
+  return env === "en" || env === "it" ? env : "ru";
 }
 
 function moodMarkdown(): string {

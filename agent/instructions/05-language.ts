@@ -27,18 +27,23 @@ function resolveLang(): string {
       typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
         ? (parsed as Record<string, unknown>).language
         : undefined;
-    if (language === "ru" || language === "en") return language;
+    if (language === "ru" || language === "en" || language === "it")
+      return language;
   } catch {
     // нет файла (меню ни разу не меняло язык) / нет доступа / битый JSON.
   }
-  return process.env.AGENT_LANGUAGE === "en" ? "en" : "ru";
+  const env = process.env.AGENT_LANGUAGE;
+  return env === "en" || env === "it" ? env : "ru";
 }
 
 function languageMarkdown(): string {
+  const lang = resolveLang();
   const rule =
-    resolveLang() === "en"
+    lang === "en"
       ? "Reply in English by default. If the user writes to you in another language, match theirs."
-      : "Отвечай по-русски по умолчанию. Если пользователь пишет на другом языке — подстройся под него.";
+      : lang === "it"
+        ? "Rispondi in italiano per impostazione predefinita. Se l'utente ti scrive in un'altra lingua, adeguati alla sua."
+        : "Отвечай по-русски по умолчанию. Если пользователь пишет на другом языке — подстройся под него.";
   return `## Язык / Language\n${rule}`;
 }
 

@@ -37,11 +37,15 @@ const cache: { lang: Language | null; mtimeMs: number; checkedAt: number } = {
 };
 
 // settings.language ("ru"|"en") → env AGENT_LANGUAGE → "ru". Незнакомые значения
-// в settings проваливаются к env, незнакомый env — к дефолту "ru".
+// в settings проваливаются к env, незнакомый env — к дефолту "ru". Исключение: "it"
+// (язык агента в этом форке) не имеет своей таблицы строк — для меню ближайший
+// фолбэк английский, не русский.
 function resolveLang(): Language {
   const fromSettings = readSettings().language;
   if (fromSettings === "ru" || fromSettings === "en") return fromSettings;
-  return process.env.AGENT_LANGUAGE === "en" ? "en" : "ru";
+  const env = process.env.AGENT_LANGUAGE;
+  if (fromSettings === "it" || env === "it") return "en";
+  return env === "en" ? "en" : "ru";
 }
 
 export function getLang(): Language {

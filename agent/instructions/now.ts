@@ -23,16 +23,18 @@ function resolveLang(): string {
       typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
         ? (parsed as Record<string, unknown>).language
         : undefined;
-    if (language === "ru" || language === "en") return language;
+    if (language === "ru" || language === "en" || language === "it")
+      return language;
   } catch {
     // нет файла / нет доступа / битый JSON — берём язык из env-фолбэка ниже.
   }
-  return process.env.AGENT_LANGUAGE === "en" ? "en" : "ru";
+  const env = process.env.AGENT_LANGUAGE;
+  return env === "en" || env === "it" ? env : "ru";
 }
 
 function nowMarkdown(): string {
   const lang = resolveLang();
-  const locale = lang === "en" ? "en-US" : "ru-RU";
+  const locale = lang === "en" ? "en-US" : lang === "it" ? "it-IT" : "ru-RU";
   const formatted = new Intl.DateTimeFormat(locale, {
     timeZone: TIMEZONE,
     weekday: "long",
@@ -45,7 +47,9 @@ function nowMarkdown(): string {
 
   return lang === "en"
     ? `Current user date and time: ${formatted}, timezone ${TIMEZONE}.`
-    : `Текущая дата и время пользователя: ${formatted}, часовой пояс ${TIMEZONE}.`;
+    : lang === "it"
+      ? `Data e ora attuali dell'utente: ${formatted}, fuso orario ${TIMEZONE}.`
+      : `Текущая дата и время пользователя: ${formatted}, часовой пояс ${TIMEZONE}.`;
 }
 
 export default defineDynamic({
