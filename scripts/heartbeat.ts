@@ -159,7 +159,9 @@ function resurfacedMemories(): string {
   try {
     const r = spawnSync(
       "uv",
-      ["run", engine, "creative", "3", ".", "--min-salience", "0.6"],
+      // schema.json esplicito: senza, engine.py ripiega su scripts/schema.json
+      // (inesistente) e ignora la config del vault.
+      ["run", engine, "creative", "3", ".", "schema.json", "--min-salience", "0.6"],
       { cwd: vault, encoding: "utf8", timeout: 20_000 },
     );
     if (r.status !== 0) return "";

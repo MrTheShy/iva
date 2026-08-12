@@ -218,8 +218,10 @@ maint("graph.health", [
   "--as-of",
   today,
 ]);
-// engine.decay updates card relevance/tiers.
-maint("engine.decay", [`${SCRIPTS}/engine.py`, "decay", "."]);
+// engine.decay updates card relevance/tiers. SCHEMA is mandatory here: without it
+// engine.py falls back to scripts/schema.json (which does not exist) and every card
+// decays at the default rate — the vault's per-domain decay curves never apply.
+maint("engine.decay", [`${SCRIPTS}/engine.py`, "decay", ".", SCHEMA]);
 // engine.touch — recall reinforces: memory_search queues its top hits in
 // data/memory-touch.jsonl and this consumes them (dedup, one graded touch each).
 // Best-effort by design: a bad line or a vanished card must not fail the doctor.
@@ -245,7 +247,7 @@ function consumeTouchQueue(): void {
     }
   }
   for (const file of files) {
-    run("uv", ["run", `${SCRIPTS}/engine.py`, "touch", file]);
+    run("uv", ["run", `${SCRIPTS}/engine.py`, "touch", file, SCHEMA]);
   }
   if (files.size > 0) console.log(`doctor: reinforced ${files.size} recalled cards`);
 }
