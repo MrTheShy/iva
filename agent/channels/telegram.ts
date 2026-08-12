@@ -594,10 +594,17 @@ async function processMediaPart(
               `${tag} пользователь прислал изображение: ${path}. Посмотри его своими инструментами/` +
                 `скиллами и ответь по содержимому; не можешь — так и скажи.`,
             )
-          : tr(
-              `${tag} the user sent a file: ${path}. Load the \`documents\` skill and reply on its content.`,
-              `${tag} пользователь прислал файл: ${path}. Загрузи скилл \`documents\` и ответь по содержимому файла.`,
-            );
+          : media.transcribe
+            ? // Vocale/audio con trascrizione fallita: prima finiva nel ramo
+              // "documents", una skill che legge solo PDF/DOCX/XLSX — vicolo cieco.
+              tr(
+                `${tag} the user sent a voice/audio message (saved: ${path}) but transcription is unavailable right now. Tell them honestly and ask them to type it.`,
+                `${tag} пользователь прислал голосовое (сохранено: ${path}), но расшифровка сейчас недоступна. Скажи честно и попроси написать текстом.`,
+              )
+            : tr(
+                `${tag} the user sent a file: ${path}. Load the \`documents\` skill and reply on its content.`,
+                `${tag} пользователь прислал файл: ${path}. Загрузи скилл \`documents\` и ответь по содержимому файла.`,
+              );
     const context = [lead];
     if (transcript) {
       const sanitized = sanitizeInbound(transcript);
