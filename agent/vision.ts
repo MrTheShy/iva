@@ -37,7 +37,12 @@ export async function describeImage(
     return out.trim();
   }
 
-  const { baseURL, apiKey, visionModel } = providerConfig;
+  // Endpoint di visione dedicato: il provider di testo può non avere modelli
+  // multimodali (es. api.deepseek.com) — VISION_BASE_URL/VISION_API_KEY/
+  // VISION_MODEL puntano lo sguardo altrove senza cambiare il resto.
+  const baseURL = process.env.VISION_BASE_URL || providerConfig.baseURL;
+  const apiKey = process.env.VISION_API_KEY || providerConfig.apiKey;
+  const visionModel = process.env.VISION_MODEL || providerConfig.visionModel;
   if (!apiKey || !visionModel) return "";
   const b64 = Buffer.from(bytes).toString("base64");
   const res = await fetch(`${baseURL}/chat/completions`, {
