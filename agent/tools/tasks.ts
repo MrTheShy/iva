@@ -37,10 +37,12 @@ export default defineTool({
   description:
     "Управление списком задач пользователя. action=add добавляет задачу (нужен text); " +
     "list показывает задачи (по умолчанию незавершённые); done отмечает задачу выполненной (нужен id); " +
-    "remove удаляет задачу (нужен id). Разовое напоминание «напомни в …» — это add с remindAt: " +
-    "планировщик сам пришлёт ⏰ в чат в эту минуту (переживает рестарты).",
+    "remove удаляет задачу (нужен id); update правит существующую (нужен id + любые из text/priority/due/remindAt). " +
+    "Разовое напоминание «напомни в …» — это add с remindAt: " +
+    "планировщик сам пришлёт ⏰ в чат в эту минуту (переживает рестарты). " +
+    "Перенести напоминание — update с новым remindAt; снять — update с remindAt=\"\".",
   inputSchema: z.object({
-    action: z.enum(["add", "list", "done", "remove"]),
+    action: z.enum(["add", "list", "done", "remove", "update"]),
     text: z
       .string()
       .min(1)
@@ -64,8 +66,9 @@ export default defineTool({
       .string()
       .optional()
       .describe(
-        "Для add: момент напоминания, ISO 8601 С ОФСЕТОМ (напр. 2026-08-12T18:30:00+02:00; " +
-          "текущий часовой пояс видишь в промпте). В эту минуту в чат придёт ⏰ с текстом задачи.",
+        "Для add/update: момент напоминания, ISO 8601 С ОФСЕТОМ (напр. 2026-08-12T18:30:00+02:00; " +
+          "текущий часовой пояс видишь в промпте). В эту минуту в чат придёт ⏰ с текстом задачи. " +
+          "При update пустая строка снимает напоминание.",
       ),
     includeDone: z
       .boolean()
@@ -97,7 +100,7 @@ export default defineTool({
 });
 
 type Args = {
-  action: "add" | "list" | "done" | "remove";
+  action: "add" | "list" | "done" | "remove" | "update";
   text?: string;
   id?: number;
   priority?: Priority;
@@ -105,6 +108,9 @@ type Args = {
   remindAt?: string;
   includeDone?: boolean;
 };
+
+const badRemindAt = (value: string) =>
+  value !== "" && !Number.isFinite(Date.parse(value));
 
 async function run({ action, text, id, priority, due, remindAt, includeDone }: Args) {
   const tasks = await load();
@@ -151,6 +157,27 @@ async function run({ action, text, id, priority, due, remindAt, includeDone }: A
       const [removed] = tasks.splice(idx, 1);
       await save(tasks);
       return { ok: true, removed, total: tasks.length };
+    }
+    case "update": {
+      // Prima per riprogrammare serviva remove+add: id perso e remindedAt con lui.
+      if (!id) return { ok: false, error: "Для update нужен id" };
+      const t = tasks.find((x) => x.id === id);
+      if (!t) return { ok: false, error: `Задача ${id} не найдена` };
+      if (remindAt !== undefined && badRemindAt(remindAt)) {
+        return {
+          ok: false,
+          error: `remindAt "${remindAt}" не парсится: нужен ISO 8601 с офсетом (пустая строка снимает напоминание)`,
+        };
+      }
+      if (text !== undefined) t.text = text;
+      if (priority !== undefined) t.priority = priority;
+      if (due !== undefined) t.due = due;
+      if (remindAt !== undefined) {
+        t.remindAt = remindAt === "" ? null : remindAt;
+        delete t.remindedAt; // ri-armato: il nuovo orario suona di nuovo
+      }
+      await save(tasks);
+      return { ok: true, updated: t };
     }
   }
 }
