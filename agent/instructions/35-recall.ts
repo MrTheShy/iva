@@ -14,10 +14,12 @@ import { searchMemory } from "../tools/memory_search.ts";
 // read_file solo quando servono i dettagli. Best-effort totale: qualunque errore
 // → nessuna iniezione, mai un turno rotto.
 //
-// I giri di servizio (rollup, digest, heartbeat) entrano via eve/client con
-// channel kind "http": lì il "messaggio" è un prompt di sistema lungo — cercarlo
-// nel vault è solo rumore e latenza.
-const SKIP_KINDS = new Set(["http"]);
+// Allowlist esplicita: il richiamo gira SOLO sui turni della chat Telegram.
+// I giri di servizio (rollup, digest, heartbeat, eval) entrano via eve/client
+// senza canale autorato — il loro kind può essere "http" o undefined a seconda
+// del percorso, quindi un blocklist non basta: lì il "messaggio" è un prompt di
+// sistema lungo e cercarlo nel vault è solo rumore e latenza.
+const ALLOW_KIND = "telegram";
 const MAX_QUERY = 400;
 const MIN_QUERY = 4;
 const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
@@ -69,8 +71,7 @@ export default defineDynamic({
       try {
         const mode = recallMode();
         if (mode === "off") return defineInstructions({ markdown: "" });
-        const kind = ctx.channel?.kind;
-        if (mode !== "force" && kind !== undefined && SKIP_KINDS.has(kind))
+        if (mode !== "force" && ctx.channel?.kind !== ALLOW_KIND)
           return defineInstructions({ markdown: "" });
         const text = lastUserText(ctx.messages);
         if (text.length < MIN_QUERY || text.startsWith("/"))
