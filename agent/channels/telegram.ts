@@ -336,8 +336,11 @@ async function fetchTelegramFile(
     return null;
   }
   const token = process.env.TELEGRAM_BOT_TOKEN ?? "";
+  // Timeout esplicito: senza, un CDN appeso tiene il turno su "sto lavorando"
+  // a tempo indefinito (nessun retry qui: il chiamante degrada con garbo).
   const dl = await fetch(
     `https://api.telegram.org/file/bot${token}/${filePath}`,
+    { signal: AbortSignal.timeout(60_000) },
   );
   if (!dl.ok) return null;
   return { bytes: await dl.arrayBuffer() };
@@ -405,6 +408,9 @@ async function transcribe(audio: ArrayBuffer): Promise<string> {
       "Content-Type": "application/octet-stream",
     },
     body: audio,
+    // Un provider STT appeso non deve bloccare il turno all'infinito: il
+    // chiamante ha già il ramo "trascrizione non disponibile".
+    signal: AbortSignal.timeout(45_000),
   });
   if (!res.ok) throw new Error(`Deepgram HTTP ${res.status}`);
   const json = (await res.json()) as {
@@ -1300,6 +1306,10 @@ const telegram = telegramChannel({
     const raw: TelegramRawMessage = message.raw;
     const partsRaw = messageParts(raw);
     const media = mediaFromRaw(raw);
+    // Posizione/contatto/sondaggio: prima finivano SOLO nel diario e l'update
+    // veniva droppato senza risposta (niente testo, niente attachment →
+    // shouldDispatch falso). Ora entrano anche nel contesto del turno.
+    const nonFileContext: string[] = [];
     for (const partRaw of partsRaw) {
       const location = asRecord(partRaw.location);
       const contact = asRecord(partRaw.contact);
@@ -1320,13 +1330,30 @@ const telegram = telegramChannel({
       if (nonFile) {
         const [head, body] = nonFile.split("\t");
         appendDaily(head, body);
+        nonFileContext.push(
+          head === "[location]"
+            ? tr(
+                `[location] the user shared a location: ${body}`,
+                `[location] пользователь прислал геопозицию: ${body}`,
+              )
+            : head === "[contact]"
+              ? tr(
+                  `[contact] the user shared a contact: ${body}`,
+                  `[contact] пользователь прислал контакт: ${body}`,
+                )
+              : tr(
+                  `[poll] the user sent a poll: ${body}`,
+                  `[poll] пользователь прислал опрос: ${body}`,
+                ),
+        );
       }
     }
 
     // The allowlist and dispatch decision are complete. Publish the one working
     // status before reply sanitization, media I/O, security scans or providers.
     const shouldDispatchAny =
-      partsRaw.length === 1
+      nonFileContext.length > 0 ||
+      (partsRaw.length === 1
         ? media
           ? shouldDispatchMedia(message, ctx.telegram.botUsername)
           : shouldDispatch(message, ctx.telegram.botUsername)
@@ -1335,7 +1362,7 @@ const telegram = telegramChannel({
             return mediaFromRaw(partRaw)
               ? shouldDispatchMedia(partMessage, ctx.telegram.botUsername)
               : shouldDispatch(partMessage, ctx.telegram.botUsername);
-          });
+          }));
     if (!shouldDispatchAny) {
       return null;
     }
@@ -1444,6 +1471,7 @@ const telegram = telegramChannel({
       }
       preContext.push(replyContext.item);
     }
+    preContext.push(...nonFileContext);
 
     // Обёртка диспатчащих return'ов: preContext едет ПЕРЕД остальным контекстом хода.
     const withPre = <T extends { auth: unknown; context?: string[] }>(

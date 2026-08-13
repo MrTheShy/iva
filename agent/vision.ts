@@ -51,6 +51,8 @@ export async function describeImage(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
+    // Stesso principio del canale: un provider appeso non blocca il turno.
+    signal: AbortSignal.timeout(60_000),
     body: JSON.stringify({
       model: visionModel,
       max_tokens: 700,

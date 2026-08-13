@@ -160,14 +160,15 @@ function dailyText() {
     .join("\n");
 }
 
-test("location, contact and poll updates append daily data before the no-turn dispatch gate", async () => {
-  const cases: Array<[Message, RegExp]> = [
+test("location, contact and poll updates land in the diary AND start a turn with context", async () => {
+  const cases: Array<[Message, RegExp, RegExp]> = [
     [
       message({
         text: undefined,
         location: { latitude: 41.3, longitude: 69.2 },
       }),
       /\[location\]\n41\.3, 69\.2/,
+      /\[location\].*41\.3, 69\.2/,
     ],
     [
       message({
@@ -179,17 +180,26 @@ test("location, contact and poll updates append daily data before the no-turn di
         },
       }),
       /\[contact\]\nAda Lovelace \+99800/,
+      /\[contact\].*Ada Lovelace \+99800/,
     ],
     [
       message({ text: undefined, poll: { question: "Ship it?" } }),
       /\[poll\]\nShip it\?/,
+      /\[poll\].*Ship it\?/,
     ],
   ];
 
-  for (const [raw, pattern] of cases) {
+  for (const [raw, dailyPattern, contextPattern] of cases) {
     const before = dailyText();
-    assert.equal((await dispatch(raw)).length, 0);
-    assert.match(dailyText().slice(before.length), pattern);
+    const sends = await dispatch(raw);
+    // Prima del fix questi update finivano SOLO nel diario e l'update veniva
+    // droppato senza risposta; ora aprono un turno col dato nel contesto.
+    assert.equal(sends.length, 1);
+    assert.ok(
+      sends[0][0].context.some((item) => contextPattern.test(item)),
+      `context misses ${String(contextPattern)}: ${JSON.stringify(sends[0][0].context)}`,
+    );
+    assert.match(dailyText().slice(before.length), dailyPattern);
   }
 });
 
