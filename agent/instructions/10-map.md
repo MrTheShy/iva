@@ -46,7 +46,7 @@
   запускает doctor. Они превращают сырой день в карточки + саммари и обновляют `CORE.md`. Не гоняй вручную.
 - Тяжёлые процедуры — это скиллы: грузи по имени, тело придёт само
   (`morning-digest`, `web-research`, `agent-browser`, `google-workspace`, `security-defense`,
-  `telegram-userbot`, `rich-post`, `documents`).
+  `telegram-userbot`, `rich-post`, `documents`, `claude-work`, `heartbeat`).
 
 ### Запись в ядро (CORE) — пользователь управляет тобой через разговор
 

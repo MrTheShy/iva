@@ -20,7 +20,18 @@ function personaMarkdown(): string {
   }
   if (!persona) return ""; // пустой файл — тоже ничего не инжектим.
   if (persona.length > MAX_CHARS) {
-    persona = persona.slice(0, MAX_CHARS) + "\n…(характер усечён)";
+    // Обрезаем по границе строки/предложения, а не посреди слова: слепой slice
+    // отдавал модели персону с оборванным хвостом.
+    const head = persona.slice(0, MAX_CHARS);
+    const cut = Math.max(
+      head.lastIndexOf("\n"),
+      head.lastIndexOf(". "),
+      head.lastIndexOf("! "),
+      head.lastIndexOf("? "),
+    );
+    persona =
+      (cut > MAX_CHARS / 2 ? head.slice(0, cut + 1).trimEnd() : head) +
+      "\n…(характер усечён)";
   }
   return `## Характер (настроен тестом /menu)\n${persona}`;
 }

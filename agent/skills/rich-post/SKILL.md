@@ -1,6 +1,6 @@
 ---
 description: >-
-  Send Telegram rich-media posts and reports via the bot (Bot API 10.1 sendRichMessage) - text, inline images, tables, headings, lists, quotes, collapsible blocks, formulas, collages/slideshows ALL in one message bubble. This is the REQUIRED transport for reports (see the red-banner rule in the persona). Also use when asked for a rich post, a message with images between text, a post with a table, "rich message", "картинка в середине текста". NOT for plain text replies (just answer) or simple albums.
+  Send Telegram rich-media posts via the bot (Bot API 10.1 sendRichMessage) - text, inline images, tables, headings, lists, quotes, collapsible blocks, formulas, collages/slideshows ALL in one message bubble. Use it from BACKGROUND SCRIPTS (cron, no channel) and for posts with images between text. NOT for normal chat replies or reports: the channel already renders tables/checklists/details as rich messages natively - just answer with well-formatted markdown. Not for simple albums either.
 ---
 
 # rich-post — Telegram rich messages via the bot
@@ -127,8 +127,13 @@ HTML-only extras: <u>underline</u> <sub>x</sub> <sup>x</sup>
 - Use `rich_message.markdown` OR `rich_message.html`, exactly one.
 - Channels/groups: the bot must be admin with permission to send media (and
   the target still has to be allowlisted).
-- The host does NOT call sendRichMessage on normal replies — this script is
-  the way to send rich posts.
+- The host DOES render normal replies with tables/checklists/`<details>` as
+  rich messages natively (`needsRichMessage` in the Telegram channel). This
+  script exists for background scripts (cron — no channel) and for posts with
+  images placed between text.
+- A PRIVATE local image never needs the public-host route: send it with plain
+  `sendPhoto` (multipart upload works there, unlike rich messages) and the
+  text as a separate reply — nothing leaves the server except to Telegram.
 
 ## Example
 

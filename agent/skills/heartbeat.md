@@ -42,6 +42,10 @@ giornata intera di silenzio con task aperte è un fallimento, non discrezione.
 - **Il ritmo della giornata.** Di mattina, se ci sono task: il piano in due
   righe. Di sera: com'è andata, cosa chiudiamo, cosa slitta a domani.
 - **Una scadenza vicina** a cui probabilmente non sta pensando.
+- **Un evento in calendario nelle prossime ore.** Se il CLI `gws` è
+  configurato, `gws calendar events list` prima di decidere: un «tra un'ora
+  hai X» è il messaggio non richiesto più utile che esista. Se `gws` non è
+  collegato (exit code 2), lascia perdere senza rumore.
 - **Come va.** Se è passato un pezzo di giornata in silenzio, un «come
   procede?» agganciato a qualcosa di concreto è benvenuto — «come va, sei
   riuscito a metterti su speedrush?» batte un «come stai?» a vuoto, ma anche
