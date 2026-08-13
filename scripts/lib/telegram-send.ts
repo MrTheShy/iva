@@ -13,6 +13,34 @@
 // фолбэк-декодер использует и Telegram-канал (agent/channels/telegram.ts).
 import { toTelegramHtmlChunks, htmlToPlain } from "./telegram-format.ts";
 import { scanOutbound } from "./security-gate.ts";
+import {
+  DEFAULT_QUIET_FROM,
+  DEFAULT_QUIET_TO,
+  inQuietHours,
+} from "./heartbeat-window.ts";
+
+// I mittenti di sistema (rollup 04:00, doctor 05:00, claude-run notturno) passano
+// tutti da qui: nelle quiet hours il messaggio arriva SILENZIOSO (niente suono/
+// vibrazione) invece di svegliare il telefono. I promemoria espliciti passano
+// neverSilent — un ⏰ chiesto per le 07:00 deve suonare.
+function inQuietWindow(now = new Date()): boolean {
+  const tz = process.env.ASSISTANT_TIMEZONE;
+  let hour = now.getHours();
+  if (tz) {
+    try {
+      hour = Number(
+        new Intl.DateTimeFormat("en-US", {
+          hour: "numeric",
+          hour12: false,
+          timeZone: tz,
+        }).format(now),
+      );
+    } catch {
+      // fuso invalido: si usa l'ora del processo
+    }
+  }
+  return inQuietHours(hour, DEFAULT_QUIET_FROM, DEFAULT_QUIET_TO);
+}
 
 type TelegramRequest = Record<string, unknown>;
 
@@ -42,9 +70,13 @@ export async function sendTelegramHtml(
   bot: string,
   chat: string,
   md: unknown,
-  { caption = false }: { caption?: boolean } = {},
+  {
+    caption = false,
+    neverSilent = false,
+  }: { caption?: boolean; neverSilent?: boolean } = {},
 ): Promise<{ ok: boolean; fellBack: boolean; error: string }> {
   let fellBack = false;
+  const silent = !neverSilent && inQuietWindow();
   // Outbound security-гейт: редактим утёкшие секреты и в ночных отчётах (fail-open + лог).
   const guard = scanOutbound(md as string);
   if (!guard.clean) {
@@ -63,6 +95,7 @@ export async function sendTelegramHtml(
         chat_id: chat,
         text: chunk,
         parse_mode: "HTML",
+        ...(silent ? { disable_notification: true } : {}),
       });
       if (r.ok) continue;
       // 400 = Telegram не распарсил HTML. Одна повторная попытка без тегов/parse_mode.
@@ -71,6 +104,7 @@ export async function sendTelegramHtml(
         const plain = await post(bot, {
           chat_id: chat,
           text: htmlToPlain(chunk),
+          ...(silent ? { disable_notification: true } : {}),
         });
         if (!plain.ok)
           return {

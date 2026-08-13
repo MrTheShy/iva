@@ -39,7 +39,11 @@ async function deliverDue(): Promise<void> {
     if (due.length === 0) return;
     const delivered = new Set<number>();
     for (const t of due) {
-      const sent = await sendTelegramHtml(BOT, CHAT, `⏰ ${t.text}`);
+      // neverSilent: un promemoria chiesto esplicitamente deve suonare anche
+      // nelle quiet hours (a differenza dei report di sistema).
+      const sent = await sendTelegramHtml(BOT, CHAT, `⏰ ${t.text}`, {
+        neverSilent: true,
+      });
       if (sent.ok) delivered.add(t.id);
       else console.error(`[reminders] invio fallito per task ${t.id}:`, sent.error);
     }
