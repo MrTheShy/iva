@@ -29,6 +29,7 @@ import {
   defaultMood,
   type Mood,
 } from "./lib/mood.ts";
+import { shouldThink } from "./lib/heartbeat-gate.ts";
 import { sendRing } from "./lib/fcm.ts";
 
 const PORT = process.env.IVA_PORT ?? "8723";
@@ -51,6 +52,9 @@ interface HeartbeatState {
   ticksSinceSpoke?: number;
   /** Consecutive initiative messages Shy never answered. */
   unanswered?: number;
+  /** World fingerprint at the last model think (heartbeat-gate.ts). */
+  lastFingerprint?: string;
+  lastThinkAt?: number;
 }
 
 // Every write is a locked read-modify-write against the CURRENT file, not the
@@ -149,6 +153,57 @@ async function evolveMood(): Promise<Mood> {
   }
 }
 const mood = await evolveMood();
+
+// The deterministic gate: most ticks stare at an unchanged world and pay a full
+// model round (plus the uv subprocess) just to say PASS. Think only when the
+// observable world moved, on the periodic idle cadence, and never past the
+// anti-nagging ladder. --dry bypasses it: that flag exists to test the think.
+function worldFingerprint(): string {
+  const tz = process.env.ASSISTANT_TIMEZONE || undefined;
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const vaultRaw = process.env.ASSISTANT_VAULT_DIR ?? "vault";
+  const vault = vaultRaw.startsWith("/") ? vaultRaw : resolve(vaultRaw);
+  const files = [
+    join(DATA_DIR, "tasks.json"),
+    join(DATA_DIR, "claude-sessions.json"),
+    join(vault, "daily", `${today}.md`),
+  ];
+  return files
+    .map((f) => {
+      try {
+        return String(Math.round(statSync(f).mtimeMs));
+      } catch {
+        return "-";
+      }
+    })
+    .join("|");
+}
+const fingerprint = worldFingerprint();
+if (!DRY) {
+  const gate = shouldThink({
+    fingerprint,
+    lastFingerprint: state.lastFingerprint,
+    lastThinkAt: state.lastThinkAt,
+    now,
+    ghosted,
+    unanswered: state.unanswered,
+    lastSpokeAt: state.lastSpokeAt,
+  });
+  if (!gate.think) {
+    console.log(`heartbeat: skip senza modello (${gate.reason})`);
+    process.exit(0);
+  }
+  await withState((current) => ({
+    ...current,
+    lastThinkAt: now,
+    lastFingerprint: fingerprint,
+  }));
+}
 
 // A high-salience memory from the cold tiers, for reminiscence. Best-effort:
 // no uv, no vault, no salient cards — no line in the prompt, never a failure.
