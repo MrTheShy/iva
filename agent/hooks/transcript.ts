@@ -1,6 +1,7 @@
 import { defineHook } from "eve/hooks";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { isEvalRunning } from "../lib/eval-flag.js";
 
 // Двусторонний транскрипт: финальный ответ Iva дозаписывается в ТОТ ЖЕ дневной файл
 // vault, что и реплики юзера (agent/channels/telegram.ts).
@@ -46,6 +47,8 @@ export default defineHook({
       // Il PASS del heartbeat non è una battuta di Iva: ~60 righe al giorno nel
       // daily inquinano il rollup e affogano l'appraisal. Stessa regex del tick.
       if (/^pass\b/i.test(text)) return;
+      // I turni dell'eval A/B (scripts/eval-recall.ts) non sono conversazione.
+      if (isEvalRunning()) return;
       appendDaily("[iva]", text);
     },
   },

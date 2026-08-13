@@ -3,6 +3,8 @@ import {
   defineInstructions,
   type DynamicResolveContext,
 } from "eve/instructions";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { searchMemory } from "../tools/memory_search.ts";
 
 // Richiamo automatico pre-turno. La MAP chiede al modello di CHIAMARE memory_search,
@@ -18,6 +20,26 @@ import { searchMemory } from "../tools/memory_search.ts";
 const SKIP_KINDS = new Set(["http"]);
 const MAX_QUERY = 400;
 const MIN_QUERY = 4;
+const DATA_DIR = process.env.ASSISTANT_DATA_DIR ?? "data";
+
+// settings.recallMode, riletto ogni turno come le altre instruction dinamiche:
+// "off" spegne il richiamo, "force" lo attiva anche sui turni http (serve al
+// runner A/B scripts/eval-recall.ts), tutto il resto = comportamento normale.
+function recallMode(): "auto" | "off" | "force" {
+  try {
+    const parsed: unknown = JSON.parse(
+      readFileSync(join(DATA_DIR, "settings.json"), "utf8"),
+    );
+    const m =
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>).recallMode
+        : undefined;
+    if (m === "off" || m === "force") return m;
+  } catch {
+    // nessun file / JSON rotto → auto
+  }
+  return "auto";
+}
 
 function lastUserText(messages: DynamicResolveContext["messages"]): string {
   // Le user-part in coda dopo l'ultima replica dell'assistente: lead dei media +
@@ -45,8 +67,10 @@ export default defineDynamic({
   events: {
     "turn.started": async (_event: unknown, ctx: DynamicResolveContext) => {
       try {
+        const mode = recallMode();
+        if (mode === "off") return defineInstructions({ markdown: "" });
         const kind = ctx.channel?.kind;
-        if (kind !== undefined && SKIP_KINDS.has(kind))
+        if (mode !== "force" && kind !== undefined && SKIP_KINDS.has(kind))
           return defineInstructions({ markdown: "" });
         const text = lastUserText(ctx.messages);
         if (text.length < MIN_QUERY || text.startsWith("/"))
