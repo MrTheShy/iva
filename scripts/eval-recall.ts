@@ -116,5 +116,11 @@ try {
   );
 } finally {
   await setRecallMode(undefined);
+  // Il transport del client eve ritenta le consegne fallite ("Queue delivery
+  // failed … retrying"): un turno duplicato può completare MINUTI dopo l'ultima
+  // risposta letta qui. Tenere il flag ancora un po' evita che quei ritardatari
+  // finiscano nel diario a flag rimosso (successo il 2026-08-13: 4 voci spurie).
+  console.log("attendo 3 min per i turni duplicati ritardatari…");
+  await new Promise((resolve) => setTimeout(resolve, 180_000));
   rmSync(evalFlagPath(), { force: true });
 }
